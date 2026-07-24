@@ -27,7 +27,7 @@
 | OpenShift | `4.16.x` |
 | IBM Maximo Operator Catalog | `v9-250828-amd64` |
 | MAS CLI | `quay.io/ibmmas/cli:15.2.0` |
-| MAS / Manage Channel | `9.2` |
+| MAS / Manage Channel | `9.2.x` (앱별 개별 채널, 값은 설치 전 재확인) |
 
 > `quay.io/ibmmas/cli:latest`는 사용하지 않습니다. catalog `v9-250828-amd64`를 사용할 때는 같은 시기의 MAS CLI 버전으로 고정해야 합니다.
 >
@@ -228,7 +228,17 @@ StorageClass 확인:
 oc get storageclass
 ```
 
-> `odf-lvm-vg1` 같은 LVM StorageClass는 `ReadWriteOnce` 용도로만 사용합니다. `Storage Class (RWX)`에는 별도의 RWX 지원 StorageClass를 입력해야 합니다.
+> LVM Storage operator가 deviceClass `vg1`로 생성하는 StorageClass 이름은 `lvms-vg1`입니다(예: `odf-lvm-vg1`이 아님. `lvms-<deviceClass 이름>` 규칙). `oc get storageclass`로 실제 이름을 확인한 뒤 `Storage Class (RWO)` 값에 사용합니다. 이 StorageClass는 `ReadWriteOnce` 용도로만 사용합니다. `Storage Class (RWX)`에는 별도의 RWX 지원 StorageClass를 입력해야 합니다.
+>
+> volumeBindingMode는 기본적으로 `WaitForFirstConsumer`입니다. SNO는 노드가 1개뿐이라 파드 배치 최적화 목적은 의미가 없지만, PVC가 이를 소비하는 파드가 생성되기 전까지 `Pending` 상태로 보이는 것은 정상 동작입니다. 아래 명령으로 확인합니다.
+>
+> ```bash
+> oc get storageclass lvms-vg1 -o yaml | grep volumeBindingMode
+> ```
+>
+> ⚠️ 미검증
+>
+> IBM MAS SNO 참고 문서(`ibm-mas-manage.github.io/sno`)에 따르면 SNO에서는 모든 파드가 단일 노드에서 실행되므로 RWO StorageClass만으로 충분하며 별도의 RWX StorageClass가 필요하지 않을 수 있습니다. 실제 `mas install` 프롬프트에서 RWX가 어떤 컴포넌트에 요구되는지 확인한 뒤, 불필요하면 RWX StorageClass 준비를 생략할 수 있습니다.
 
 ### 4.2 RWX Storage 준비
 
@@ -266,23 +276,30 @@ oc apply -f - <<EOF
 apiVersion: operators.coreos.com/v1alpha1
 kind: CatalogSource
 metadata:
-  name: ibm-maximo-operator-catalog
+  name: ibm-operator-catalog
   namespace: openshift-marketplace
 spec:
-  displayName: IBM Maximo Operator Catalog
+  displayName: IBM Maximo Operators (v9-250828-amd64)
   image: icr.io/cpopen/ibm-maximo-operator-catalog:v9-250828-amd64
   publisher: IBM
   sourceType: grpc
+  priority: 90
   updateStrategy:
     registryPoll:
       interval: 45m
 EOF
 ```
 
+> CatalogSource 이름은 `ibm-operator-catalog`로 고정합니다. IBM 공식 카탈로그 페이지(`v9-250828-amd64`)에 게시된 실제 이름과 일치해야 하며, 임의의 이름(예: `ibm-maximo-operator-catalog`)을 사용하면 이후 `mas install`의 Catalog Source 프롬프트 값과 실제 클러스터의 CatalogSource가 어긋나 설치가 실패할 수 있습니다.
+>
+> ⚠️ 미검증
+>
+> `mas install`은 내부적으로 `--mas-catalog-version` 값을 기준으로 IBM Maximo Operator Catalog 설치를 자동 수행하는 것으로 보입니다(공식 CLI 문서의 Ansible 자동화 목록 기준). 즉 이 수동 `oc apply` 단계가 아예 불필요하거나, CLI가 자체적으로 만드는 CatalogSource와 이름이 겹칠 수 있습니다. 실제 설치 전 `mas install --help`로 카탈로그 자동 관리 여부를 확인하고, 자동 생성된다면 이 수동 단계는 생략합니다.
+
 READY 확인:
 
 ```bash
-oc get catalogsource -n openshift-marketplace ibm-maximo-operator-catalog
+oc get catalogsource -n openshift-marketplace ibm-operator-catalog
 oc get packagemanifest -n openshift-marketplace | grep -i maximo
 ```
 
@@ -295,20 +312,34 @@ docker run -ti --rm \
   quay.io/ibmmas/cli:15.2.0 mas install
 ```
 
+> ⚠️ 미검증
+>
+> 공식 CLI 문서에서 확인된 흐름은 컨테이너 내부의 대화형 프롬프트에서 OpenShift 서버 URL/토큰을 직접 입력하거나, 컨테이너 안에서 `oc login`을 먼저 실행하는 방식입니다. `~/.kube:/root/.kube` 마운트로 kubeconfig를 그대로 전달하는 방식은 공식 문서에서 확인되지 않았습니다. 우연히 동작할 수 있으나, 실패 시 아래 대안을 사용합니다.
+>
+> ```bash
+> docker run -ti --rm \
+>   -v ~:/mnt/home \
+>   quay.io/ibmmas/cli:15.2.0 bash -c "oc login --token=<token> --server=<api-url> && mas install"
+> ```
+
 대화형 프롬프트 기준 입력값:
 
 | 항목 | 값 |
 |------|-----|
 | IBM Entitlement Key | `<ibm-entitlement-key>` |
 | MAS License File | `/mnt/home/<entitlement-file>` |
-| Catalog Source | `ibm-maximo-operator-catalog` |
-| Subscription Channel | `9.2` |
+| Catalog Source | `ibm-operator-catalog` |
+| Subscription Channel (Core/Manage 등 앱별로 개별 입력) | `9.2.x` |
 | MAS Instance ID | `<mas-instance-id>` |
 | Workspace ID | `<workspace-id>` |
 | Storage Class (RWO) | `<rwo-storage-class>` |
 | Storage Class (RWX) | `<rwx-storage-class>` |
 
 > 프롬프트 문구는 MAS CLI 버전에 따라 다를 수 있습니다. 이 문서는 `quay.io/ibmmas/cli:15.2.0` 기준으로 catalog를 고정합니다.
+>
+> ⚠️ 미검증
+>
+> "Subscription Channel"은 단일 값이 아니라 `--mas-channel`, `--manage-channel` 등 애플리케이션별 채널로 나뉘어 있을 가능성이 높습니다. 또한 catalog `v9-250828-amd64` 기준 채널 값은 `9.1.x`, `9.1.x-feature`처럼 "x-suffix" 형식이므로, `9.2`도 실제로는 `9.2.x` 형태일 수 있습니다. 설치 전 `oc get packagemanifest -n openshift-marketplace <package-name> -o yaml`로 실제 지원 채널 목록을 확인합니다.
 
 ### 5.3 설치 상태 확인
 
@@ -355,18 +386,8 @@ https://admin.<mas-instance-id>.apps.<cluster-name>.<base-domain>
 
 ### 6.2 DB 초기화 스크립트
 
-기존 초안에는 아래 명령이 포함되어 있었지만, 현재 문서에서는 자동 실행 여부가 확인되지 않았으므로 운영 절차로 단정하지 않습니다.
-
-> ⚠️ 미검증
->
-> ```bash
-> oc exec -it -n mas-<mas-instance-id>-manage <manage-pod> -- bash
-> cd /opt/IBM/SMP/maximo/tools/maximo
-> ./updatedb.sh
-> ./runscriptfile.sh -cIT -f SETUPIT
-> ```
->
-> 위 명령은 실제 Manage pod 경로, 컨테이너명, IT solution 적용 방식, MAS CLI 자동 실행 여부를 확인한 뒤 사용합니다.
+`updatedb.sh` / `runscriptfile.sh -cIT -f SETUPIT`는 **온프레미스 Maximo Asset Management 7.x**에서 DBC(database configuration) 스크립트를 수동 적용할 때 쓰던 레거시 도구입니다. MAS 오퍼레이터 기반 배포(9.2)에는 해당하지 않으며, IBM 공식 문서는 Industry Solution/Add-on 활성화가 Suite Administration 배포 마법사에서 애플리케이션 버전 선택 → DB 연결 → JDBC 구성 → Industry Solution 선택 절차로 진행되고, 이후 DB 스키마 반영은 오퍼레이터가 자동으로 수행한다고 설명합니다.
+따라서 이 스크립트를 수동으로 실행할 필요는 없습니다. Manage pod에 직접 접속해 스크립트를 실행하는 절차는 사용하지 않습니다.
 
 ---
 
@@ -380,16 +401,18 @@ MAS Manage의 보고서 기능은 Manage 배포 상태와 라이선스/애플리
 - 보고서 메뉴 접근 가능 여부 확인
 - 샘플 보고서 실행 가능 여부 확인
 
+`mxe.report.birt.viewerurl` 시스템 속성은 기본값이 비어 있으며, 클러스터형 환경에서 리포트 처리를 별도의 BIRT Report-Only Server(BROS)로 오프로드할 때만 설정하는 값입니다. 기본 리포트 뷰잉에는 필요하지 않습니다. `http://localhost:9080/...`처럼 로컬 주소를 직접 넣는 방식은 OpenShift Route 환경에서는 애초에 해석되지 않으므로 사용하지 않습니다.
+
+BIRT를 위한 별도 서버 번들이 필요한 경우, IBM 공식 절차는 `manageapp`을 직접 patch하는 것이 아니라 `ManageWorkspace` CR의 `serverBundles` 필드에 report 타입 번들을 추가하는 방식입니다(Ansible role `suite_manage_birt_report_config` 기준). 예:
+
+```bash
+oc get manageworkspace -n mas-<mas-instance-id>-manage
+oc edit manageworkspace <manageworkspace-name> -n mas-<mas-instance-id>-manage
+```
+
 > ⚠️ 미검증
 >
-> 기존 초안의 `oc patch manageapp ... birt latest` 명령과 `mxe.report.birt.viewerurl=http://localhost:9080/...` 값은 현재 공식 절차와 실제 CR 이름 확인 전까지 운영 절차로 사용하지 않습니다.
->
-> ```bash
-> oc patch manageapp <manageapp-name> \
->   -n mas-<mas-instance-id>-manage \
->   --type merge \
->   -p '<patch-json>'
-> ```
+> `serverBundles` 필드의 정확한 스키마는 설치된 Manage 버전의 CRD(`oc explain manageworkspace.spec.serverBundles`)로 확인한 뒤 적용합니다.
 
 ---
 

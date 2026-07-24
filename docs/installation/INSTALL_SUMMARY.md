@@ -14,7 +14,7 @@
 | Red Hat OpenShift | `4.16.x` | `v9-250828` catalog 지원 범위 내 버전 |
 | IBM Maximo Operator Catalog | `v9-250828-amd64` | `icr.io/cpopen/ibm-maximo-operator-catalog:v9-250828-amd64` |
 | MAS CLI 이미지 | `quay.io/ibmmas/cli:15.2.0` | `latest` 사용 금지 |
-| MAS Core / Manage | `9.2` | 설치 시 channel `9.2` 선택 |
+| MAS Core / Manage | `9.2` | 설치 시 애플리케이션별 channel(예: `9.2.x`) 선택. 단일 "9.2" 채널이 아니라 `--mas-channel`, `--manage-channel` 등 앱별로 개별 지정 |
 | MongoDB | `6.0` 또는 `7.0` | MAS CLI / catalog 호환 범위 기준 |
 | DB2 | catalog 호환 버전 | MAS CLI 의존성 설치 또는 별도 DB 구성 중 하나를 선택 |
 
@@ -76,7 +76,9 @@ Bastion은 설치 작업 서버이므로 RHEL 계열을 권장합니다. SNO 노
 | 일반 RWO PVC | `ReadWriteOnce` | LVM Storage, ODF RBD |
 | 공유 RWX PVC | `ReadWriteMany` | ODF CephFS, NFS, Portworx 등 |
 
-> LVM Storage는 기본적으로 RWO 스토리지입니다. `Storage Class (RWX)` 값으로 LVM StorageClass를 넣으면 설치 또는 런타임에서 실패할 수 있습니다.
+> LVM Storage는 기본적으로 RWO 스토리지입니다. `Storage Class (RWX)` 값으로 LVM StorageClass(deviceClass `vg1` 기준 실제 이름은 `lvms-vg1`)를 넣으면 설치 또는 런타임에서 실패할 수 있습니다.
+>
+> IBM MAS SNO 참고 문서에 따르면, SNO는 모든 파드가 단일 노드에서 실행되므로 RWO만으로 충분하며 별도 RWX StorageClass가 필요 없을 수 있습니다. 실제 `mas install` 프롬프트로 RWX 요구 여부를 확인한 뒤 준비 범위를 결정합니다.
 
 ---
 
@@ -129,7 +131,17 @@ Bastion은 설치 작업 서버이므로 RHEL 계열을 권장합니다. SNO 노
 
 > ⚠️ 미검증
 >
-> - IT 모듈 활성화 후 `updatedb.sh`, `runscriptfile.sh -cIT -f SETUPIT`를 직접 실행해야 하는지 여부
-> - BIRT 활성화를 위해 `manageapp` CR을 직접 patch해야 하는지 여부
-> - 폐쇄망 이미지 미러링 명령의 세부 옵션은 사용하려는 MAS CLI 버전의 `--help` 출력으로 재확인 필요
+> - `mas install`이 IBM Maximo Operator Catalog(CatalogSource)를 자체적으로 자동 생성/관리하는지 여부. 자동 처리된다면 ONLINE 5.1절 / OFFLINE 6.3절의 수동 `oc apply` 단계는 생략 가능
+> - "Subscription Channel" 값이 문서 표기대로 단일 `9.2.x`인지, 애플리케이션별로 서로 다른 채널명을 쓰는지
+> - 폐쇄망 이미지 미러링 명령의 세부 옵션은 사용하려는 MAS CLI 버전의 `--help` 출력으로 재확인 필요(이 문서의 옵션명은 CLI 15.2.0 소스코드 기준으로 정정했으나, 실제 실행 전 최종 확인 필요)
+> - OFFLINE 문서 5장의 `imageDigestSources` mirror 경로가 실제 `mas mirror-redhat-images` 산출물과 일치하는지 (미러링 완료 후 registry 경로 실측 필요)
 > - 외부 DB2 / 외부 MongoDB를 수동으로 구성하는 경우 MAS `JdbcCfg`, `MongoCfg` 연결 절차
+
+다음 항목은 이번 검토에서 공식 문서 대조 결과 **오류로 확인되어 본문에서 정정**했습니다.
+
+- ONLINE 문서의 CatalogSource 이름 오류(`ibm-maximo-operator-catalog` → `ibm-operator-catalog`)
+- OFFLINE 문서에 IBM Maximo Operator Catalog의 CatalogSource 생성 절차 자체가 누락되어 있던 문제
+- 오프라인 미러링 명령의 옵션명 대부분이 실제 CLI와 다르던 문제(예: `--working-dir`→`--dir`, `--registry-host`→`--host` 등)
+- LVM StorageClass 예시 이름 오류(`odf-lvm-vg1` → `lvms-vg1`)
+- IT 모듈 활성화 시 `updatedb.sh`/`runscriptfile.sh -cIT -f SETUPIT` 실행 절차 — 온프레미스 Maximo 7.x용 레거시 절차로 확인되어 MAS 9.2 오퍼레이터 흐름에서는 불필요
+- BIRT 활성화 시 `manageapp` CR patch 및 `mxe.report.birt.viewerurl=http://localhost:9080/...` — 잘못된 예시로 확인되어 `ManageWorkspace` CR 기반 절차로 정정

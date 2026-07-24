@@ -27,7 +27,7 @@
 | OpenShift                   | `4.16.x`                    |
 | IBM Maximo Operator Catalog | `v9-250828-amd64`           |
 | MAS CLI                     | `quay.io/ibmmas/cli:15.2.0` |
-| MAS / Manage Channel        | `9.2`                       |
+| MAS / Manage Channel        | `9.2.x` (앱별 개별 채널, 값은 설치 전 재확인)         |
 
 > 오프라인 설치에서는 버전 핀닝이 특히 중요합니다. MAS CLI, catalog, OpenShift, mirror 결과물을 같은 기준으로 고정하지 않으면 폐쇄망에서 재현이 어렵습니다.
 >
@@ -183,6 +183,8 @@ cd ~/mas-install/ocp
 
 curl -LO https://mirror.openshift.com/pub/openshift-v4/clients/ocp/4.16.0/oc-mirror.tar.gz
 ```
+
+> 이 문서는 OpenShift 4.16 기준 표준 방식인 **oc-mirror v1**(mirror 결과를 `install-config.yaml`의 `imageDigestSources`에 직접 반영하는 방식)을 기준으로 합니다. oc-mirror v2는 4.16에서 아직 Tech Preview이며, v2를 사용하는 경우 mirror 결과 산출물(IDMS/ITMS/CatalogSource YAML)을 클러스터 설치 완료 후 별도로 `oc apply`하는 절차가 필요합니다(현재 문서에는 포함되어 있지 않음). v1/v2 중 사용할 버전을 먼저 확정합니다.
 
 #### 2.2.7 MAS CLI 이미지
 
@@ -360,6 +362,8 @@ docker run -ti --rm \
 
 ### 4.2 Phase 1 — 인터넷 PC에서 파일시스템으로 저장
 
+> ⚠️ 아래 옵션명은 `quay.io/ibmmas/cli:15.2.0` 소스코드(`image/cli/mascli/functions/mirror_redhat`, `mirror_images`) 기준으로 확인한 실제 옵션입니다. 실행 전 `--help` 출력과 다시 한 번 대조합니다.
+
 Red Hat 이미지:
 
 ```bash
@@ -368,9 +372,9 @@ docker run -ti --rm \
   -v /mnt/images:/mnt/images \
   quay.io/ibmmas/cli:15.2.0 mas mirror-redhat-images \
   --mode to-filesystem \
-  --working-dir /mnt/images/redhat \
-  --ocp-release 4.16 \
-  --redhat-pullsecret /mnt/home/<pull-secret-file>
+  --dir /mnt/images/redhat \
+  --release 4.16 \
+  --pullsecret /mnt/home/<pull-secret-file>
 ```
 
 MAS 이미지:
@@ -381,10 +385,10 @@ docker run -ti --rm \
   -v /mnt/images:/mnt/images \
   quay.io/ibmmas/cli:15.2.0 mas mirror-images \
   --mode to-filesystem \
-  --working-dir /mnt/images/mas \
-  --ibm-entitlement-key <ibm-entitlement-key> \
-  --catalog-version v9-250828-amd64 \
-  --mirror-mas-channel 9.2 \
+  --dir /mnt/images/mas \
+  --ibm-entitlement <ibm-entitlement-key> \
+  --catalog v9-250828-amd64 \
+  --channel 9.2.x \
   --mirror-manage
 ```
 
@@ -408,11 +412,11 @@ docker run -ti --rm \
   -v /mnt/images:/mnt/images \
   quay.io/ibmmas/cli:15.2.0 mas mirror-redhat-images \
   --mode from-filesystem \
-  --working-dir /mnt/images/redhat \
-  --registry-host registry.<cluster-name>.<base-domain> \
-  --registry-port 5000 \
-  --registry-username <registry-user> \
-  --registry-password <registry-password>
+  --dir /mnt/images/redhat \
+  --host registry.<cluster-name>.<base-domain> \
+  --port 5000 \
+  --username <registry-user> \
+  --password <registry-password>
 ```
 
 MAS 이미지:
@@ -423,12 +427,19 @@ docker run -ti --rm \
   -v /mnt/images:/mnt/images \
   quay.io/ibmmas/cli:15.2.0 mas mirror-images \
   --mode from-filesystem \
-  --working-dir /mnt/images/mas \
-  --registry-host registry.<cluster-name>.<base-domain> \
-  --registry-port 5000 \
-  --registry-username <registry-user> \
-  --registry-password <registry-password>
+  --dir /mnt/images/mas \
+  --host registry.<cluster-name>.<base-domain> \
+  --port 5000 \
+  --username <registry-user> \
+  --password <registry-password>
 ```
+
+> 미러링 완료 후, 아래 명령으로 실제 registry에 생성된 repository 경로를 확인한 뒤 5장의 `imageDigestSources` 경로를 맞춰야 합니다.
+>
+> ```bash
+> skopeo list-tags docker://registry.<cluster-name>.<base-domain>:5000/openshift/release-images
+> skopeo list-tags docker://registry.<cluster-name>.<base-domain>:5000/openshift/release
+> ```
 
 ---
 
@@ -473,11 +484,13 @@ additionalTrustBundle: |
   <mirror-registry-ca>
 ```
 
-> ⚠️ 미검증
+> ⚠️ 미검증 — Critical
 >
-> `imageDigestSources`의 mirror 경로는 `mas mirror-redhat-images` 또는 `oc mirror` 결과에 맞춰 조정해야 합니다. 위 경로는 예시이며, 실제 registry repository 구조와 다르면 설치 ISO가 release image를 Pull하지 못합니다.
+> `imageDigestSources`의 mirror 경로는 `mas mirror-redhat-images` 결과에 맞춰 조정해야 합니다. 표준 `oc adm release mirror`/`oc-mirror v1` 산출물은 보통 release 이미지와 art-dev 이미지를 **동일한 하나의 repository 경로**(예: `<registry>/openshift4`)로 매핑하는 경우가 많습니다. 위 예시처럼 `openshift/release-images`와 `openshift/release`로 분리된 두 경로가 `mas mirror-redhat-images`의 실제 산출물과 일치하는지 IBM 공식 문서로 확인되지 않았습니다.
 >
-> OpenShift 4.16 설치 방식에서 mirror 설정을 `install-config.yaml`에 넣을지, 설치 후 `ImageDigestMirrorSet`으로 넣을지는 현장 mirror 방식에 맞춰 선택합니다.
+> **반드시 4.2절 미러링 완료 후 `skopeo list-tags`(또는 `curl -k https://<registry>/v2/_catalog`)로 실제 생성된 repository 경로를 먼저 확인한 뒤, 그 경로를 아래 `mirrors:` 값에 반영합니다.** 경로가 다르면 Agent-based Installer가 release image를 Pull하지 못해 부트스트랩이 멈춥니다.
+>
+> OpenShift 4.16 설치 방식에서 mirror 설정을 `install-config.yaml`에 넣을지, 설치 후 `ImageDigestMirrorSet`으로 넣을지는 사용하는 oc-mirror 버전(v1/v2)에 맞춰 선택합니다.
 
 ### 5.2 `agent-config.yaml`
 
@@ -589,6 +602,40 @@ oc get catalogsource -n openshift-marketplace
 
 > `mas-and-dependencies`와 유사한 `ImageDigestMirrorSet`이 생성되는지 확인합니다. 이름은 MAS CLI 버전에 따라 달라질 수 있습니다.
 
+### 6.3 IBM Maximo Operator Catalog 등록
+
+`configure-airgap`(및 `--setup-redhat-catalogs`)는 Red Hat 오퍼레이터 카탈로그와 release image mirror 설정을 담당하며, **IBM Maximo Operator Catalog의 CatalogSource 자체는 별도로 생성해야 합니다.** `ImageDigestMirrorSet`이 이미 `icr.io/cpopen/...` 참조를 mirror registry로 투명하게 리다이렉트하므로, 아래처럼 온라인과 동일한 이미지 경로(`icr.io/cpopen/...`)를 그대로 사용해도 실제로는 mirror registry에서 이미지를 가져옵니다.
+
+```bash
+oc apply -f - <<EOF
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+  name: ibm-operator-catalog
+  namespace: openshift-marketplace
+spec:
+  displayName: IBM Maximo Operators (v9-250828-amd64)
+  image: icr.io/cpopen/ibm-maximo-operator-catalog:v9-250828-amd64
+  publisher: IBM
+  sourceType: grpc
+  priority: 90
+  updateStrategy:
+    registryPoll:
+      interval: 45m
+EOF
+```
+
+확인:
+
+```bash
+oc get catalogsource -n openshift-marketplace ibm-operator-catalog
+oc get packagemanifest -n openshift-marketplace | grep -i maximo
+```
+
+> ⚠️ 미검증
+>
+> `mas install`이 `--mas-catalog-version` 값으로 CatalogSource를 자동 생성할 가능성이 있습니다([5.1절](INSTALL_ONLINE.md#51-ibm-maximo-operator-catalog-등록) 참고). 자동 생성된다면 이 수동 단계는 생략합니다. 오프라인 환경에서는 자동 생성 시 CLI가 `icr.io`에 직접 접근하려 시도할 수 있으므로, IDMS가 먼저 적용된 상태인지 확인한 뒤 `mas install`을 실행합니다.
+
 ---
 
 ## 7. MAS 9.2 설치
@@ -596,7 +643,7 @@ oc get catalogsource -n openshift-marketplace
 오프라인 환경에서도 기본 원칙은 온라인 설치와 동일합니다.
 
 - `quay.io/ibmmas/cli:15.2.0` 사용
-- `ibm-operator-catalog` catalog 사용
+- `ibm-operator-catalog` catalog 사용 (6.3절에서 생성)
 - RWO/RWX StorageClass 구분
 - DB2/MongoDB 수동 생성 대신 MAS CLI 의존성 설치 흐름 우선
 
@@ -616,7 +663,7 @@ docker run -ti --rm \
 | IBM Entitlement Key  | `<ibm-entitlement-key>`        |
 | MAS License File     | `/mnt/home/<entitlement-file>` |
 | Catalog Source       | `ibm-operator-catalog`         |
-| Subscription Channel | `9.2`                          |
+| Subscription Channel (앱별 개별 입력) | `9.2.x`           |
 | MAS Instance ID      | `<mas-instance-id>`            |
 | Workspace ID         | `<workspace-id>`               |
 | Storage Class (RWO)  | `<rwo-storage-class>`          |
