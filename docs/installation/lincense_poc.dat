@@ -1,0 +1,144 @@
+SERVER sls-rlks-0.rlks d3efe01ad77a 27000
+VENDOR ibmratl
+VENDOR telelogic
+VENDOR rational
+
+INCREMENT AppPoints ibmratl 1.0 15-jan-2027 100 vendor_info="0|IBM \
+	Maximo AppPoints Pool|0" ISSUED=27-Jul-2026 NOTICE="Sales \
+	Order Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 \
+	Internal Account;ICN:Internal_IBM;Country:AU" SIGN="0044 6827 \
+	432B 0465 0B7E 8713 BF38 A600 4FF3 3E0B 1DA0 ADF2 5A9E D3CA \
+	B64C"
+
+INCREMENT MAS-Admin-Limited ibmratl 1.0 15-jan-2027 1 \
+	VENDOR_STRING=IBM:t,AppPoints,1.0,MAS-Admin-Limited,5 \
+	ISSUED=27-Jul-2026 NOTICE="Sales Order \
+	Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 Internal \
+	Account;ICN:Internal_IBM;Country:AU" SIGN="0090 59EC ADDC 5486 \
+	52E5 7E85 9966 1F00 F65B FC6B 651F AA7A 77F1 9A5D CB1C"
+
+INCREMENT MAS-Admin-Base ibmratl 1.0 15-jan-2027 1 \
+	VENDOR_STRING=IBM:t,AppPoints,1.0,MAS-Admin-Base,10 \
+	ISSUED=27-Jul-2026 NOTICE="Sales Order \
+	Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 Internal \
+	Account;ICN:Internal_IBM;Country:AU" SIGN="00CE 93F6 1ED9 3CFE \
+	0630 7DF7 A5B0 0C00 8E44 9F46 CE83 F36E F80B 1D93 1921"
+
+INCREMENT MAS-Admin-Premium ibmratl 1.0 15-jan-2027 1 \
+	VENDOR_STRING=IBM:t,AppPoints,1.0,MAS-Admin-Premium,15 \
+	ISSUED=27-Jul-2026 NOTICE="Sales Order \
+	Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 Internal \
+	Account;ICN:Internal_IBM;Country:AU" SIGN="0087 A556 466B 5D9A \
+	7CFD 0414 1F8C 7100 A8A8 835E 92CA 0BBF C5FA 42F5 8973"
+
+INCREMENT MAS-API-Limited ibmratl 1.0 15-jan-2027 1 \
+	VENDOR_STRING=IBM:t,AppPoints,1.0,MAS-API-Limited,5 \
+	ISSUED=27-Jul-2026 NOTICE="Sales Order \
+	Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 Internal \
+	Account;ICN:Internal_IBM;Country:AU" SIGN="0075 F809 D607 4CC6 \
+	9FE5 0C1B 6A2E 1A00 DB78 4B88 B42A 049F 8415 F1CB 0417"
+
+INCREMENT MAS-API-Base ibmratl 1.0 15-jan-2027 1 \
+	VENDOR_STRING=IBM:t,AppPoints,1.0,MAS-API-Base,10 \
+	ISSUED=27-Jul-2026 NOTICE="Sales Order \
+	Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 Internal \
+	Account;ICN:Internal_IBM;Country:AU" SIGN="00D9 9788 80BB 074A \
+	18C9 E71C C082 F500 A0D1 1A72 F96A AC1A 1E81 80F9 4B34"
+
+INCREMENT MAS-API-Premium ibmratl 1.0 15-jan-2027 1 \
+	VENDOR_STRING=IBM:t,AppPoints,1.0,MAS-API-Premium,15 \
+	ISSUED=27-Jul-2026 NOTICE="Sales Order \
+	Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 Internal \
+	Account;ICN:Internal_IBM;Country:AU" SIGN="004D 32CD 2E92 412B \
+	C64A 0A3E 5F7A 7600 E276 953A A908 E83B E736 B910 34F3"
+
+INCREMENT MAS-Limited ibmratl 1.0 15-jan-2027 1 \
+	VENDOR_STRING=IBM:t,AppPoints,1.0,MAS-Limited,5 \
+	ISSUED=27-Jul-2026 NOTICE="Sales Order \
+	Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 Internal \
+	Account;ICN:Internal_IBM;Country:AU" SIGN="0085 D308 5031 B5C9 \
+	B609 7494 F2E1 2F00 FA5D EECA 9461 AA9D FE77 92FD F3F4"
+
+INCREMENT MAS-Base ibmratl 1.0 15-jan-2027 1 \
+	VENDOR_STRING=IBM:t,AppPoints,1.0,MAS-Base,10 \
+	ISSUED=27-Jul-2026 NOTICE="Sales Order \
+	Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 Internal \
+	Account;ICN:Internal_IBM;Country:AU" SIGN="0097 9CDE F4AE CAAA \
+	2A67 A41B 7576 F600 DAC1 8E64 09E7 7B0A D98D 008A 19F4"
+
+INCREMENT MAS-Premium ibmratl 1.0 15-jan-2027 1 \
+	VENDOR_STRING=IBM:t,AppPoints,1.0,MAS-Premium,15 \
+	ISSUED=27-Jul-2026 NOTICE="Sales Order \
+	Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 Internal \
+	Account;ICN:Internal_IBM;Country:AU" SIGN="0044 ADF1 A2DB DE8D \
+	D669 666D F424 1F00 4D8E 2D6B 0F2B D2E7 0027 44F9 CC9F"
+
+INCREMENT MAS-Add-On-Limited ibmratl 1.0 15-jan-2027 1 \
+	VENDOR_STRING=IBM:t,AppPoints,1.0,MAS-Add-On-Limited,5 \
+	ISSUED=27-Jul-2026 NOTICE="Sales Order \
+	Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 Internal \
+	Account;ICN:Internal_IBM;Country:AU" SIGN="0085 D70C 8A88 32AB \
+	762F 8F5A 7885 4D00 A040 29BE B093 0966 2A0B 9C71 F114"
+
+INCREMENT MAS-Add-On-Base ibmratl 1.0 15-jan-2027 1 \
+	VENDOR_STRING=IBM:t,AppPoints,1.0,MAS-Add-On-Base,10 \
+	ISSUED=27-Jul-2026 NOTICE="Sales Order \
+	Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 Internal \
+	Account;ICN:Internal_IBM;Country:AU" SIGN="003B B1B9 DFD6 0838 \
+	4967 6C4D 3808 6F00 1D92 9CE5 0331 D20A 5EB7 D1FC 1518"
+
+INCREMENT MAS-Add-On-Premium ibmratl 1.0 15-jan-2027 1 \
+	VENDOR_STRING=IBM:t,AppPoints,1.0,MAS-Add-On-Premium,15 \
+	ISSUED=27-Jul-2026 NOTICE="Sales Order \
+	Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 Internal \
+	Account;ICN:Internal_IBM;Country:AU" SIGN="0075 6366 4947 FAF1 \
+	2A38 9712 B33E F700 62A7 DD23 C045 74B1 0679 1A1D C9B2"
+
+INCREMENT MAS-Server-Limited ibmratl 1.0 15-jan-2027 1 \
+	VENDOR_STRING=IBM:t,AppPoints,1.0,MAS-Server-Limited,5 \
+	ISSUED=27-Jul-2026 NOTICE="Sales Order \
+	Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 Internal \
+	Account;ICN:Internal_IBM;Country:AU" SIGN="00E6 8731 5421 5CDE \
+	1C3F CFD0 6F63 2200 E1E1 3860 04B4 F289 1F62 6CD8 2AC2"
+
+INCREMENT MAS-Server-Base ibmratl 1.0 15-jan-2027 1 \
+	VENDOR_STRING=IBM:t,AppPoints,1.0,MAS-Server-Base,10 \
+	ISSUED=27-Jul-2026 NOTICE="Sales Order \
+	Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 Internal \
+	Account;ICN:Internal_IBM;Country:AU" SIGN="0068 E0E2 A013 BF30 \
+	8029 9DE3 1250 1500 497D 64FC 0B9D 4996 DDBD 6529 4AE8"
+
+INCREMENT MAS-Server-Premium ibmratl 1.0 15-jan-2027 1 \
+	VENDOR_STRING=IBM:t,AppPoints,1.0,MAS-Server-Premium,15 \
+	ISSUED=27-Jul-2026 NOTICE="Sales Order \
+	Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 Internal \
+	Account;ICN:Internal_IBM;Country:AU" SIGN="0076 E3CD 896D DEED \
+	75F5 C080 0771 5C00 D648 3ADF 379A 8C56 C561 9974 AFD9"
+
+INCREMENT MAS-SelfService ibmratl 1.0 15-jan-2027 1 \
+	VENDOR_STRING=IBM:t,AppPoints,1.0,MAS-SelfService,0 \
+	ISSUED=27-Jul-2026 NOTICE="Sales Order \
+	Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 Internal \
+	Account;ICN:Internal_IBM;Country:AU" SIGN="00A2 3407 7939 1F1E \
+	6C09 A9B3 57D4 3F00 A263 D3BA 8622 8EB8 D1AF 0FB2 B416"
+
+INCREMENT MAS-Limited-Authorized ibmratl 1.0 15-jan-2027 1 \
+	VENDOR_STRING=IBM:t,AppPoints,1.0,MAS-Limited-Authorized,2 \
+	ISSUED=27-Jul-2026 NOTICE="Sales Order \
+	Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 Internal \
+	Account;ICN:Internal_IBM;Country:AU" SIGN="005E 2882 240E F9CF \
+	548D C65A BFF5 D200 339A 0B9C BB09 8A83 61BE C3BA 9105"
+
+INCREMENT MAS-Base-Authorized ibmratl 1.0 15-jan-2027 1 \
+	VENDOR_STRING=IBM:t,AppPoints,1.0,MAS-Base-Authorized,3 \
+	ISSUED=27-Jul-2026 NOTICE="Sales Order \
+	Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 Internal \
+	Account;ICN:Internal_IBM;Country:AU" SIGN="003D A487 DDC3 3C16 \
+	6CBC 5CEF EE53 9D00 5C93 163A E939 CC97 B40D 4042 B2B3"
+
+INCREMENT MAS-Premium-Authorized ibmratl 1.0 15-jan-2027 1 \
+	VENDOR_STRING=IBM:t,AppPoints,1.0,MAS-Premium-Authorized,5 \
+	ISSUED=27-Jul-2026 NOTICE="Sales Order \
+	Number:IBM_AP_2026_Internal_5;Account ID:IBM AP 2026 Internal \
+	Account;ICN:Internal_IBM;Country:AU" SIGN="0088 B19A 14C8 2A56 \
+	0181 D6FA 9CC8 AA00 E246 33B7 3041 5042 076C 607A 0AA3"
