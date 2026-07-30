@@ -7,7 +7,12 @@
 ```text
 docs/
   installation/
-    INSTALL.md        MAS 전체 설치 절차 (사전 요구사항 → DB → MAS → IT 모듈)
+    INSTALL_SERVER.md   폐쇄망 설치용 서버·용량·계정 준비
+    INSTALL_FILES.md    인터넷 구간 파일 및 실제 이미지 세트 준비
+    INSTALL_OFFLINE.md  폐쇄망 설치 절차
+    INSTALL_ONLINE.md   온라인 설치 절차
+    INSTALL_SUMMARY.md  설치 기준 및 준비 항목 요약
+    INSTALLATION.md     환경별 입력값 기록 양식
 ```
 
 ## 에이전트 작업 규칙
