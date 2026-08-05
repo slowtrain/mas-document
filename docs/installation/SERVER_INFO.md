@@ -1,7 +1,6 @@
 # 서버 정보 (이번 배포)
 
-> ⚠️ 접속 계정/비밀번호는 이 문서에 기록하지 않습니다. 별도 보안 저장소에서 관리하세요.
-> (현재 평문 기재된 항목이 있다면 제거하고 `.gitignore` 처리를 권장합니다.)
+> 개인 전용 저장소이므로 계정·비밀번호를 아래 **계정** 절에 함께 기록합니다. 공개 저장소로 옮기거나 공유할 때는 그 절을 먼저 제거하세요.
 
 ---
 
@@ -88,3 +87,25 @@
 | MAS instance ID | `inst1` |
 | Workspace ID | `ws1` |
 | Mirror Registry | `registry.mas-it.itmsg.co.kr:8443` |
+
+---
+
+## 계정
+
+### Mirror Registry (Quay) — 2026-08-05 설치
+
+| 항목 | 값 |
+|---|---|
+| URL | `https://registry.mas-it.itmsg.co.kr:8443` |
+| 관리자 | `init` / `T3AgRHSeYw6x5u0Z2q4OE9s81Koyd7tV` |
+| 설정 위치 | `/home/maximo/quay-install` |
+| 이미지 저장소 | `/home/maximo/mirror-registry/quay` |
+| 읽기 전용 계정 | ⬜ 미생성 — §3.6에서 OCP 노드에 배포할 pull-only 계정 |
+
+설치 시 `mas mirror-images`에 넘긴 `REGISTRY_USERNAME`은 `masadmin`이었습니다. 목적지 경로 생성에만 쓰였고 실제 Quay 계정과는 무관합니다 — §3.5 push에는 위 `init` 계정을 씁니다.
+
+### SSH 키
+
+| 항목 | 값 |
+|---|---|
+| `~/.ssh/quay_installer` | `mirror-registry install`이 요구하는 키. 2026-08-05 생성, `authorized_keys`에 등록됨 |

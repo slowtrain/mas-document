@@ -1161,7 +1161,35 @@ mkdir -p ~/quay-install ~/mirror-registry/{quay,sqlite}
 chmod 750 ~/quay-install ~/mirror-registry
 ```
 
-**2) 실행 — Registry 설치**
+**2) 실행 — SSH 키 준비**
+
+설치 프로그램은 ansible로 대상 호스트에 **SSH 접속**해서 작업합니다. 자기 자신에게 설치하더라도 키가 필요하고, **자동 생성해주지 않습니다** — 없으면 `Could not find ssh key at ~/.ssh/quay_installer`로 중단됩니다.
+
+```bash
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+ssh-keygen -t rsa -b 4096 -N '' -f ~/.ssh/quay_installer
+
+cat ~/.ssh/quay_installer.pub >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+```
+
+형식) 호스트 키를 미리 등록해 첫 접속 확인 프롬프트를 없앱니다
+
+```bash
+ssh-keyscan -H <bastion-ip> >> ~/.ssh/known_hosts 2>/dev/null
+ssh -i ~/.ssh/quay_installer maximo@<bastion-ip> hostname
+```
+
+예시)
+
+```bash
+ssh-keyscan -H 192.168.2.210 >> ~/.ssh/known_hosts 2>/dev/null
+ssh -i ~/.ssh/quay_installer maximo@192.168.2.210 hostname
+```
+
+검증 : 비밀번호를 묻지 않고 호스트명이 출력되어야 함
+
+**3) 실행 — Registry 설치**
 
 압축을 풀면 `image-archive.tar`(Quay·Redis·sqlite 이미지)가 함께 나옵니다 — 폐쇄망에서 추가로 받을 것이 없습니다.
 
@@ -1200,7 +1228,13 @@ ls -la                # image-archive.tar, execution-environment.tar, sqlite3.ta
 | `--quayHostname` **`:8443`** | 기본값 형태가 `<host>:8443`입니다. 포트가 빠지면 Quay가 생성하는 URL에 포트가 없어 리다이렉트가 깨질 수 있습니다 |
 | `--quayStorage`·`--sqliteStorage` | 지정하지 않으면 podman named volume(`quay-storage`, `sqlite-storage`)에 저장돼 **별도 디스크로 분리할 수 없습니다** |
 
-5~15분 걸립니다. `image-archive.tar`에서 이미지를 로드하는 시간이 대부분입니다.
+5~15분 걸립니다. `Copy Images` 단계에서 `image-archive.tar` 2.5GB를 SSH로 옮기고 `podman load`로 로드하는 시간이 대부분입니다 — 출력이 멈춘 것처럼 보여도 정상입니다.
+
+진행 확인 : 다른 터미널에서 실행합니다. `image-archive.tar`가 2.5GB까지 커진 뒤 이미지 3개(`quay-rhel8`, `redis`, `pause`)가 생기고, 마지막에 컨테이너가 뜹니다
+
+```bash
+watch -n 10 'du -sh ~/quay-install 2>/dev/null; echo ---; podman images; echo ---; podman ps'
+```
 
 🔴 마지막에 출력되는 **초기 사용자명·비밀번호를 반드시 기록하세요.** 다시 볼 수 없고 §3.5 push와 §3.7.2에서 씁니다.
 
@@ -1217,7 +1251,7 @@ with credentials (init, <생성된 비밀번호>)
 
 🔴 **§3.6에서 쓸 읽기 전용(pull-only) 계정을 지금 만들어 두세요.** Quay 웹 UI(`https://registry.mas-it.itmsg.co.kr:8443`)에서 사용자를 추가하고 읽기 권한만 부여합니다. 이 자격증명은 모든 OCP 노드에 배포됩니다.
 
-**3) 실행 — Bastion에 Registry CA 신뢰 등록** (root 계정)
+**4) 실행 — Bastion에 Registry CA 신뢰 등록** (root 계정)
 
 podman과 시스템 전역이 이 Registry의 자체 서명 인증서를 신뢰하도록 등록합니다. 빼먹으면 §3.5 push가 TLS 오류로 실패합니다.
 
@@ -1231,7 +1265,7 @@ install -m 0644 "$REGISTRY_CA" "/etc/pki/ca-trust/source/anchors/${REGISTRY%:*}.
 update-ca-trust
 ```
 
-**4) 확인 및 검증**
+**5) 확인 및 검증**
 
 검증 : Quay 컨테이너가 떠 있어야 함
 
