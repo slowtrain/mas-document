@@ -9,7 +9,7 @@
 | 단계 | 상태 |
 |---|---|
 | §2 사전준비 (인터넷 연결 서버) | ✅ **완료** — tar 조각 25개 준비됨, FileZilla 반출 대기 |
-| §3 설치 (사이트 Bastion) | ⬜ 미착수 |
+| §3 설치 (사이트 Bastion) | 🔄 **§3.4까지 진행** — Mirror Registry 기동 완료, CA 신뢰 등록 남음 |
 
 ## §2 사전준비 — 완료
 
@@ -84,9 +84,27 @@
 - [ ] 사이트 Bastion 디스크 1.5TB 증설 (현재 500GB)
 - [ ] 사이트 Bastion에서 복원 및 검증 → §3.1 시작
 
-## §3 설치 — 미착수
+## §3 설치 — §3.4 진행 중
 
-§3.1(RPM 저장소 등록·도구 설치)만 인터넷 연결 서버에서 예비 실행해 성공을 확인했습니다.
+| 절 | 상태 |
+|---|---|
+| 3.1 RPM 저장소 등록·도구 설치 | ✅ |
+| 3.2 DNS(dnsmasq)·NTP(chrony) | ✅ 폐쇄망 상태로 검증 — 상위 DNS 차단 후 내부 이름만 해석되는지, NTP가 `0.0.0.0:123` Stratum 10으로 서비스하는지 확인 |
+| 3.3 MAS CLI 이미지 로드 | ✅ `quay.io/ibmmas/cli:23.4.1` |
+| 3.4 Mirror Registry 설치 | 🔄 Quay 기동 완료(`failed=0`), **CA 신뢰 등록·검증·읽기 전용 계정 생성 남음** |
+| 3.5 이후 | ⬜ |
+
+계정 정보는 [SERVER_INFO.md](SERVER_INFO.md)의 **계정** 절에 있습니다.
+
+### §3.4에서 확인한 것
+
+**`mirror-registry install`은 SSH 키를 자동 생성하지 않습니다.** `~/.ssh/`가 없는 상태로 실행하면 이미지 로드 직후 `Could not find ssh key at ~/.ssh/quay_installer`로 중단됩니다. `-v` 없이 실행하면 이 메시지만 덜렁 나와 원인 파악이 어렵습니다. 자기 자신에게 설치해도 ansible이 SSH로 접속하므로 키 생성 + `authorized_keys` 등록이 전제 조건입니다 — §3.4의 2)로 문서에 추가했습니다.
+
+`--targetHostname`을 IP로 준 것도 유효했습니다. 기본값인 호스트명이 IPv6 링크로컬(`fe80::`)로만 해석되는 상태였습니다.
+
+설치 소요 **약 15분**. `Copy Images`(2.5GB를 SSH로 전송)와 Quay 첫 기동 대기(`FAILED - RETRYING` 2회)가 대부분입니다. 두 구간 모두 출력이 멈춘 것처럼 보이므로 진행 확인 명령을 문서에 넣었습니다.
+
+설치 프로그램이 마지막에 `Enable lingering`을 수행합니다 — Quay는 rootless systemd user 서비스라서 §2.3 0번의 `loginctl enable-linger`와 같은 이유입니다.
 
 ## 실행 전 확인이 필요한 항목
 
@@ -97,7 +115,6 @@
 | `from-filesystem`이 `working-dir`도 필요한지 (tar 외에) | §3.5 첫 실행 | §3.5 |
 | `mas configure-airgap --setup-redhat-catalogs` 실존 여부 | `mas configure-airgap --help` | §3.7.1 |
 | `imageDigestSources` vs `imageContentSources` | `openshift-install explain installconfig \| grep -i image` | §3.6 |
-| `mirror-registry install`의 `--quayStorage`/`--sqliteStorage` 플래그명 | `./mirror-registry install --help` | §3.4 |
 | `LVMCluster`의 `apiVersion` | `oc explain lvmcluster` | §3.8.1 |
 | NFS 프로비저너 SCC 부여 필요 여부 | 배포 후 Pod 상태 | §3.8.2 |
 
