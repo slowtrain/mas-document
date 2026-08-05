@@ -102,6 +102,9 @@
 | 이미지 저장소 | `/home/maximo/mirror-registry/quay` |
 | 읽기 전용 계정 | ⬜ 미생성 — §3.6에서 OCP 노드에 배포할 pull-only 계정 |
 
+INFO[2026-08-05 18:26:42] Quay installed successfully, config data is stored in /home/maximo/quay-install
+INFO[2026-08-05 18:26:42] Quay is available at https://registry.mas-it.itmsg.co.kr:8443 with credentials (init, T3AgRHSeYw6x5u0Z2q4OE9s81Koyd7tV)
+
 설치 시 `mas mirror-images`에 넘긴 `REGISTRY_USERNAME`은 `masadmin`이었습니다. 목적지 경로 생성에만 쓰였고 실제 Quay 계정과는 무관합니다 — §3.5 push에는 위 `init` 계정을 씁니다.
 
 ### SSH 키
