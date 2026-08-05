@@ -1,19 +1,12 @@
 # Maximo IT 오프라인(Airgap) 설치 가이드
 
-> **기준일**: 2026-07-29
-> **신뢰도 안내**: 이 문서는 IBM MAS CLI 공식 문서(`ibm-mas.github.io/cli`, GitHub 원본 `github.com/ibm-mas/cli`)와 Red Hat OpenShift 공식 문서를 근거로 작성했습니다.
->
-> 표기 규칙:
-> - **✅ 검증 완료** — 실제 CLI 실행 결과 또는 공식 문서 원문으로 확인한 내용
-> - **⚠️ 미검증** — 근거가 불충분하거나 문서 간 내용이 엇갈리는 내용. 실행 전 반드시 재확인 필요
->
-> ⚠️ IBM 지식센터(`ibm.com/docs`) 일부 페이지는 **이 문서를 작성한 환경의 자동 조회 도구에서 403이 반환되어** 검색 스니펫으로만 확인했습니다(브라우저로는 접근 가능할 수 있음). 해당 항목은 본문에 미검증으로 표시했으니 **브라우저로 원문을 직접 열어 확인**하세요. 특히 Manage/Maximo IT 배포(§3.10)와 라이선스 관련 내용이 여기 해당됩니다.
->
-> 실행 전 항상 `mas <command> --help`로 플래그를 재확인하세요 — 문서와 실제 CLI가 다른 사례를 이 배포에서 여러 번 확인했습니다(§5 참고).
+IBM MAS CLI 공식 문서(`ibm-mas.github.io/cli`)와 Red Hat OpenShift 공식 문서를 근거로 작성한 Maximo IT 오프라인 설치 가이드입니다.
 
 ---
 
-## 0. 이번 설치의 확정 값
+## 1. 설치 요약 및 흐름
+
+### 1.1 설치 구성
 
 | 항목 | 값 |
 |---|---|
@@ -24,72 +17,91 @@
 | 미사용 대상 | Cloud Pak for Data, Visual Inspection, Assist, IoT, Monitor, Optimizer 등 |
 | 데이터베이스 | **내부(in-cluster) Db2** |
 | 스토리지 | RWO = **LVM Storage**(`lvms-vg1`) / RWX = **외부 NFS — Bastion 겸용** (§3.8) |
-| Bastion | `192.168.2.210`, RHEL 9.6 (DNS, Mirror Registry, 설치 CLI 실행) |
-| SNO 노드 | `192.168.2.211` / 255.255.252.0 / GW `192.168.1.1` / MAC `00:50:56:bb:86:df` |
-| 작업 계정 | `maximo` (`~/mas-install`) |
 
-접속 정보(계정/비밀번호)는 이 문서에 기록하지 않습니다. 별도 보안 저장소를 확인하세요.
+### 1.2 필요 자원
 
----
+**1) 인터넷 연결 RHEL 서버**
 
-## 1. 설치 요약 및 흐름
+인터넷이 연결되어 있는 RHEL 서버에서 설치에 필요한 파일 다운로드 및 이미지를 생성합니다.
 
-### 1.1 전체 아키텍처
+| 항목 | 사양 |
+|---|---|
+| OS | RHEL 9.6 / x86_64 |
+| CPU | 4 Core 이상 |
+| Memory | 8 GB 이상 |
+| Disk | 🔴 **1 TB 이상** — 피크 약 760GB (§2.1의 순서 준수 시) |
+| 네트워크 | 인터넷 연결 (`registry.redhat.io`, `cp.icr.io`, `quay.io`, `mirror.openshift.com`) |
+
+**2) Bastion 서버**
+
+설치 파일 및 이미지 반입 후 설치를 진행합니다. Mirror Registry, DNS, NTP, NFS, 설치 CLI를 모두 겸합니다.
+
+| 항목 | 사양 |
+|---|---|
+| OS | RHEL 9.6 / x86_64 |
+| CPU | **8 Core** (Mirror Registry 공식 최소는 2 vCPU이나 Push 구간이 느림) |
+| Memory | **최소 16 GB / 권장 32 GB** (Mirror Registry 단독 최소가 8GB) |
+| Disk | 🔴 **1.5 TB 이상** — 반입 데이터 500GB + 설치 중 생성 1TB (§2.1) |
+| 디스크 구성 | Registry 저장소(`~/mirror-registry`)를 **별도 디스크**로 분리 권장 |
+| 네트워크 | 폐쇄망. SNO와 동일 대역 |
+
+**3) Single Node OpenShift (SNO)**
+
+실제 MAS를 구동하기 위한 자원입니다.
+
+| 항목 | 사양 |
+|---|---|
+| OS | RHCOS (OpenShift 4.20.30) |
+| CPU | 16 Core 이상 |
+| Memory | 64 GB 이상 |
+| Disk | **2개 필요** — 300 GB(OS) + 500 GB |
+| 500GB 디스크 | 🔴 **빈 상태로 유지** — LVM Storage가 RWO StorageClass로 사용. 파티션·파일시스템이 있으면 사용 불가 |
+| 네트워크 | 고정 IP, 폐쇄망 |
+
+### 1.3 설치 흐름
 
 ```text
-[인터넷 연결 RHEL 서버]  (준비 단계 전용 — 사이트 Bastion과 겸용 가능)
-  - 설치 도구 / 라이선스 다운로드
-  - MAS CLI로 이미지를 로컬 디스크에 미러링(to-filesystem)
+[인터넷 연결 RHEL 서버]
+  - 라이선스·Pull Secret·설치 도구·RPM 확보
+  - Red Hat 콘텐츠 미러링   : oc mirror         (to-filesystem)
+  - MAS 콘텐츠 미러링       : mas mirror-images (to-filesystem)
         |
-        v  (전송매체 또는 동일 서버 재사용)
-[사이트 Bastion = 192.168.2.210]
-  - Mirror Registry 운영
-  - 로컬에 쌓인 이미지를 Registry로 Push(from-filesystem)
-  - DNS, 설치 CLI 실행
+        v  전송매체로 반입
+[사이트 Bastion]
+  - DNS(dnsmasq) · NTP(chrony)
+  - Mirror Registry 구축 (별도 디스크)
+  - 반입 이미지를 Registry로 Push (from-filesystem)
+  - SNO 설치 ISO 생성
+  - NFS 서버 (RWX 제공)
+  - mas install 실행
         |
         v
-[SNO 노드 = 192.168.2.211]
-  - OpenShift 4.20.30 설치 (Agent-based Installer)
-  - MAS Core + Manage + Maximo IT 배포
+[SNO 노드]
+  - OpenShift 4.20.30 (Agent-based Installer)
+  - 디스크 2개: 300GB(OS) + 500GB(LVMS용 — 반드시 빈 상태)
+  - MAS Core + Manage + Maximo IT
 ```
 
-> **서버 구성 두 가지 경우**
->
-> | 구성 | §2(준비) 실행 위치 | §2.5(전달) | §3(설치) 실행 위치 |
-> |---|---|---|---|
-> | **A. 분리** (실제 사이트 배포) | 인터넷 연결 서버 | **필요** — tar 분할·반입 | 폐쇄망 사이트 Bastion |
-> | **B. 겸용** (테스트/검증) | Bastion 자체 (인터넷 임시 허용) | 생략 가능 | 같은 서버에서 이어서 진행 |
->
-> 이 문서는 두 경우를 모두 지원합니다. 서버 이름·IP는 §0의 값으로 치환해 사용하세요. 겸용 구성에서는 §2와 §3이 같은 서버에서 순서대로 진행되며, §2.5의 tar 분할/반입 단계만 건너뜁니다.
+### 1.4 환경 정보
 
-### 1.2 공식 문서 기준 설치 순서 (6단계)
+| 항목 | 설명 | 값 |
+|---|---|---|
+| cluster-name | OCP 클러스터 이름. 모든 도메인의 첫 단계 | `mas-it` |
+| base-domain | 클러스터 상위 도메인 | `itmsg.co.kr` |
+| Bastion IP | DNS·NTP·Registry·NFS 제공 서버 | `192.168.2.210` |
+| SNO IP | `api`·`api-int`·`*.apps`가 가리키는 주소 | `192.168.2.211` |
+| 상위 DNS IP | dnsmasq가 외부 이름을 넘길 대상. 폐쇄망이면 주석 처리 | `8.8.8.8` |
+| 네트워크 대역 | `machineNetwork`, NTP `allow` 범위 | `192.168.0.0/22` |
+| Gateway | SNO 기본 게이트웨이 | `192.168.1.1` |
+| SNO 호스트명 | `agent-config.yaml`의 `hostname` | `mas-it-sno` |
+| SNO NIC MAC | Agent Installer가 NIC를 식별하는 값 | `00:50:56:bb:86:df` |
+| Registry 관리 계정 | 이미지 Push용. §3.4 설치 시 발급 | `masadmin` |
+| Registry 읽기전용 계정 | Pull Secret에 담겨 **모든 OCP 노드에 배포**되므로 반드시 읽기 전용 | `maspull` |
+| MAS Instance ID | MAS 인스턴스 식별자. Admin URL에 포함 | `inst1` |
+| Workspace ID | Manage 워크스페이스 식별자 | `ws1` |
+| 작업 계정 | 설치 작업 계정. 홈은 `~/mas-install` | `maximo` |
 
-기존에 알려진 "OCP용 `oc-mirror`" + "MAS용 `mas mirror-images`"라는 **두 개의 별도 도구를 쓰는 방식이 아닙니다.** IBM MAS CLI 공식 가이드는 **Red Hat 콘텐츠(OCP 플랫폼 + 필수 Operator)와 MAS 콘텐츠 모두를 `mas` CLI 하나로 미러링**하도록 설계되어 있습니다.
-
-| 단계 | 작업 | 명령 | 실행 위치 |
-|---|---|---|---|
-| 1 | Red Hat 콘텐츠 미러링 (OCP 플랫폼 + 필수 Operator: DRO, Cert Manager, Grafana) | `mas mirror-redhat-images --mirror-platform --mirror-operators` | 인터넷 연결 서버 (to-filesystem) → Bastion (from-filesystem) |
-| 2 | MAS 콘텐츠 미러링 (Core/Catalog → Manage+IT → 공통 의존성/Db2 → CLI) | `mas mirror-images` (Stage 1/2/4/5, **Stage 3=CP4D는 미사용이라 제외**) | 인터넷 연결 서버 (to-filesystem) → Bastion (from-filesystem) |
-| 3 | OCP SNO 클러스터 설치 | `openshift-install agent create image` / 부팅 | Bastion → SNO |
-| 4 | Airgap 구성 — **(a)** oc-mirror 생성 리소스(IDMS/CatalogSource) 적용 + OperatorHub 기본 소스 비활성화, **(b)** `mas configure-airgap` | `oc apply` + `mas configure-airgap` | Bastion (클러스터 대상) |
-| 5 | **스토리지 준비** (RWO + RWX StorageClass) — `mas install` 전 필수 | LVM Storage(RWO) + NFS 프로비저너(RWX) | Bastion (클러스터 대상) |
-| 6 | MAS 설치 및 Manage/Maximo IT 배포·활성화 | `mas install` + Suite Administration | Bastion (클러스터 대상) |
-
-✅ **검증 완료** (2026-07-29, 실제 실행 로그로 확인): `mas mirror-redhat-images --mirror-platform`은 oc-mirror를 대체하는 게 아니라 **내부적으로 `oc mirror` v2를 그대로 호출하는 래퍼**입니다. 실행 로그(`/mnt/workspace/redhat/logs/mirror-to-filesystem-ocp4.20.log` 대상)에 다음 태스크가 그대로 찍힙니다.
-
-```
-Command: DOCKER_CONFIG=/mnt/workspace/redhat oc mirror --remove-signatures \
-  -c /mnt/workspace/redhat/imageset-ocp4.20.yml file:////mnt/workspace/redhat --v2
-```
-
-즉 MAS CLI가 `ImageSetConfiguration`(`imageset-ocp4.20.yml`)을 자동 생성하고 `oc mirror --v2`를 대신 실행해줍니다. 별도로 받아둔 `oc-mirror.tar.gz`가 불필요했던 이유도 이것입니다 — **MAS CLI 이미지(`quay.io/ibmmas/cli:23.4.1`) 안에 `oc`와 `oc-mirror` 플러그인이 이미 내장**되어 있습니다.
-
-```bash
-docker run --rm quay.io/ibmmas/cli:23.4.1 mas mirror-redhat-images --help
-docker run --rm quay.io/ibmmas/cli:23.4.1 mas mirror-images --help
-```
-
-### 1.3 참고한 공식 문서
+### 1.5 참고한 공식 문서
 
 - [IBM MAS CLI](https://ibm-mas.github.io/cli/)
 - [IBM MAS CLI Catalogs](https://ibm-mas.github.io/cli/catalogs/)
@@ -103,154 +115,239 @@ docker run --rm quay.io/ibmmas/cli:23.4.1 mas mirror-images --help
 
 ## 2. 사전준비 사항 (설치 파일 및 이미지 생성)
 
-이 장은 **인터넷 연결 서버**에서 진행합니다(§1.1의 구성 A/B 참고 — 겸용 구성이면 사이트 Bastion에서 진행). 별도 표시가 없으면 `maximo` 계정으로 실행합니다.
+Bastion 서버로 옮기기 위한 설치 파일 및 이미지를 확보하기 위해서 인터넷이 연결되어 있는 서버에서 준비합니다. 별도 표시가 없으면 사용자 계정으로 실행합니다.
 
-### 2.1 저장공간 참고 수치 (공식 문서, MAS 8.10 기준 — 최신 수치 아님, 참고용)
+### 2.1 저장공간
 
-| 구성 | 용량 |
+실측값입니다.
+
+**반입 대상 — 489GB**
+
+| 항목 | 용량 |
 |---|---|
-| MAS Core | 4GB |
-| Manage | 8GB |
-| MongoDB | 500MB |
-| TSM | 1GB |
-| SLS | 1GB |
-| CFS | 21GB |
-| Db2(내부) | 73GB |
-| Red Hat 필수 Operator 3종 | 약 80GB |
+| `mirror/redhat` — `mirror_000001.tar` 373GB + `working-dir` 25GB | **398GB** |
+| `mirror/core` (Stage 1 Core+Catalog) | 16GB |
+| `mirror/apps` (Stage 2 Manage+Maximo IT) | 25GB |
+| `mirror/other` (Stage 4 Mongo/TSM/SLS/CFS/Db2) | 43GB |
+| `mirror/cli` (Stage 5) | 4.9GB |
+| `mas-cli`, `registry`, `ocp`, `rpms`, `nfs-provisioner`, `licenses` | 약 2.8GB |
+| **합계** | **약 489GB** |
 
-Cloud Pak for Data, Visual Inspection 등 미사용 컴포넌트는 포함하지 않습니다. 실제 값은 미러링 진행 중 `du -sh "$LOCAL_DIR"` 로 재확인하세요.
+🔴 **Red Hat 콘텐츠가 공식 참고치(약 80GB)의 5배입니다.** `rhods-operator`(OpenShift AI)의 PyTorch·CUDA·vLLM 이미지가 대부분입니다. IBM imageset에서 *Optional Packages* 로 분류돼 있고 MAS는 사용하지 않으므로, 용량이 부담되면 `imageset-ocp4.20.yml`에서 제거할 수 있습니다(⚠️ 제거 후 용량은 미측정).
 
-✅ **실측값 (2026-07-30, 이 배포에서 직접 측정)** — 위 참고치는 MAS 8.10(2023년) 기준이라 **항목별로 크게 다릅니다. 실측을 우선 신뢰하세요.**
+**인터넷 연결 서버 — 1TB 이상**
 
-| 단계 | 참고치 | **실측** | 비고 |
-|---|---|---|---|
-| Stage 1 — Core + Catalog | ~4GB | **15GB** | 참고치의 약 3.8배 |
-| Stage 2 — Manage + Maximo IT | ~8GB | **25GB** | 약 3배 |
-| Stage 4 — Mongo/TSM/SLS/CFS/Db2 | ~96GB | **43GB** | **참고치보다 오히려 작음** |
-| Stage 5 — CLI | — | 약 4GB | CLI 이미지 자체 크기 |
-| Red Hat 콘텐츠 (플랫폼+Operator) | 약 80GB | 측정 중 | 완료 후 갱신 |
-| **MAS 콘텐츠 소계** | ~108GB | **약 87GB** | |
+`oc mirror`는 캐시에 모은 뒤 tar로 내보내므로 **둘을 동시에 보관**합니다. 그래서 §2.3의 **8번(Red Hat)을 먼저 끝내고 캐시를 삭제한 뒤 9번(MAS)** 을 진행해야 피크가 낮아집니다.
 
-⚠️ **이전 개정본의 "500~600GB 이상" 추정은 오류였습니다.** Stage 1이 참고치의 3.8배였다는 이유로 전체를 같은 배수로 외삽했는데, **Stage 4는 반대로 참고치의 절반 이하**로 나왔습니다. 항목마다 증감이 달라 단일 배수 외삽은 유효하지 않습니다.
+| 시점 | 사용량 |
+|---|---|
+| 8번 진행 중 (캐시 355GB + 산출물 398GB) | **약 760GB** ← 피크 |
+| 캐시 삭제 후 | 398GB |
+| 9번 완료 | 489GB |
 
-**디스크 산정 기준**: 사이트 Bastion은 ① 반입한 미러 데이터와 ② Mirror Registry에 Push된 사본을 **동시에 보관**하므로 미러 총량의 약 2배가 필요합니다. 실측 기준으로 MAS 87GB + Red Hat(측정 중, 80~150GB 추정) ≈ 총 170~240GB이므로, **2배 + OS/여유를 감안해 사이트 Bastion은 500GB 이상, 안전하게 1TB를 권장**합니다. Red Hat 미러링이 끝나면 실측 총합으로 최종 확정하세요.
+⚠️ 순서를 바꿔 9번을 먼저 하면 피크가 **841GB**가 됩니다(실측). 디스크 사용률이 90%에 가까워지면 캐시 쓰기가 지연되어 §4.3의 타임아웃이 재발합니다.
+
+**사이트 Bastion — 1.5TB 이상**
+
+| 구분 | 내용 | 용량 |
+|---|---|---|
+| 반입 데이터 | `~/mas-install` | **500GB** |
+| 설치 중 생성 | Registry 사본 489GB + NFS `/export/mas-rwx` + OS·여유 | **1TB** |
+| **합계** | | **1.5TB** |
+
+Registry 사본은 §3.5 push 때 `~/mirror-registry/quay`에 만들어집니다 — 반입 파일과 별개로 같은 양이 한 번 더 쌓입니다.
+
+**1) 확인 및 검증**
 
 ```bash
-# 최종 실측 (모든 미러링 완료 후)
 du -sh ~/mas-install/mirror/*
-du -sh ~/mas-install
 df -h /home
 ```
 
-### 2.2 서버 기본 도구 설치 (podman 등)
+### 2.2 인터넷 연결 서버에 도구 설치 (root 계정)
 
-이미지 미러링 명령(`podman run ...`)을 실행하려면 먼저 이 서버에 `podman`을 비롯한 기본 도구가 설치되어 있어야 합니다. root 계정에서 실행합니다.
+§2 작업에 필요한 도구를 설치합니다. 사이트 Bastion용 패키지는 §2.3의 4번에서 RPM으로 확보하므로 **여기서 미리 설치하지 마세요.**
+
+**1) 실행**
 
 ```bash
-hostnamectl
-uname -m
-cat /etc/redhat-release
-timedatectl status
+dnf install -y podman curl tar rsync dnf-plugins-core createrepo_c
+```
 
-subscription-manager status
-dnf repolist --enabled
+**2) 확인 및 검증**
 
-dnf install -y \
-  podman openssl tar gzip curl jq rsync \
-  dnf-plugins-core createrepo_c
-
+```bash
+cat /etc/redhat-release          # RHEL 9.6
+uname -m                         # x86_64
+timedatectl status               # 시간 동기화 정상
+dnf repolist --enabled           # appstream, baseos 활성
 podman --version
 ```
 
-완료 기준: RHEL 9.6 / x86_64 확인, 시간 동기화 정상, RHEL Subscription 또는 승인된 저장소 활성화, `podman --version` 정상 출력.
-
 ### 2.3 확보해야 할 항목
 
-| # | 항목 | 상태 / 위치 | 확보 방법 |
+| # | 항목 | 저장 위치 | 확보 방법 |
 |---|---|---|---|
-| 1 | **IBM Entitlement Key** | ✅ `~/mas-install/licenses/entitlement_key.key` | [IBM Container Software Library](https://myibm.ibm.com/products-services/containerlibrary)에서 문자열로 수동 발급 |
-| 2 | **MAS 라이선스** (AppPoints) | ✅ `~/mas-install/licenses/lincense_poc.dat` — 정식 라이선스로 확보됨 (⚠️ Maximo IT AppPoints 포함 여부는 별도 확인 필요, 아래 참고) | IBM License Key Center에서 수동 발급 |
-| 3 | **Red Hat Pull Secret** | ✅ `~/mas-install/redhat/pull-secret.json` | [Red Hat Hybrid Cloud Console](https://console.redhat.com/openshift/install/pull-secret)에서 수동 다운로드 |
-| 4 | **사이트 Bastion용 RPM 오프라인 저장소** | ✅ `~/mas-install/rpms/` | 이 서버의 `dnf` 저장소 (아래 명령으로 다운로드) |
-| 5 | **OpenShift Client / Installer / checksum** | ✅ `~/mas-install/ocp/` | `mirror.openshift.com`에서 아래 명령으로 다운로드 |
-| 6 | **MAS CLI 이미지** (`quay.io/ibmmas/cli:23.4.1`) | ✅ `~/mas-install/mas-cli/mas-cli-23.4.1.tar` | `quay.io`에서 아래 명령으로 pull+save |
-| 7 | **Mirror Registry 설치 패키지** | ✅ `~/mas-install/registry/mirror-registry-amd64.tar.gz` | Red Hat Downloads 포털 (아래 참고) |
-| 8 | **Red Hat 콘텐츠 이미지 세트** (OCP 플랫폼 + 필수 Operator) | 아래 "8." 항목 참고 | `mas mirror-redhat-images`로 미러링, 수 시간 소요 |
-| 9 | **MAS 콘텐츠 이미지 세트** (Core/Catalog, Manage+Maximo IT, 공통의존성+Db2, CLI) | 아래 "9." 항목 참고 | `mas mirror-images`로 Stage 1/2/4/5 미러링 |
-| 10 | **NFS 동적 프로비저너 이미지** (RWX용) | 아래 "10." 항목 참고 | `podman pull` + `save` — ⚠️ MAS/Red Hat 미러링에 **포함되지 않음** |
+| 1 | **IBM Entitlement Key** | `~/mas-install/licenses/entitlement_key.key` | [IBM Container Software Library](https://myibm.ibm.com/products-services/containerlibrary)에서 문자열로 수동 발급 |
+| 2 | **MAS 라이선스** (AppPoints) | `~/mas-install/licenses/<license>.dat` | IBM License Key Center에서 수동 발급 (⚠️ Maximo IT AppPoints 포함 여부 확인 필요) |
+| 3 | **Red Hat Pull Secret** | `~/mas-install/redhat/pull-secret.json` | [Red Hat Hybrid Cloud Console](https://console.redhat.com/openshift/install/pull-secret)에서 수동 다운로드 |
+| 4 | **사이트 Bastion용 RPM 오프라인 저장소** | `~/mas-install/rpms/` | 이 서버의 `dnf` 저장소 (아래 명령) |
+| 5 | **OpenShift Client / Installer / checksum** | `~/mas-install/ocp/` | `mirror.openshift.com` (아래 명령) |
+| 6 | **MAS CLI 이미지** (`quay.io/ibmmas/cli:23.4.1`) | `~/mas-install/mas-cli/mas-cli-23.4.1.tar` | `quay.io`에서 pull + save |
+| 7 | **Mirror Registry 설치 패키지** | `~/mas-install/registry/mirror-registry-amd64.tar.gz` | Red Hat Downloads 포털 |
+| 8 | **Red Hat 콘텐츠 이미지 세트** (OCP 플랫폼 + Operator) | `~/mas-install/mirror/redhat/mirror_000001.tar` | imageset 생성 후 `oc mirror` 직접 실행 — **6시간 이상** |
+| 9 | **MAS 콘텐츠 이미지 세트** (Core/Catalog, Manage+Maximo IT, 공통의존성+Db2, CLI) | `~/mas-install/mirror/{core,apps,other,cli}/` | `mas mirror-images` Stage 1/2/4/5 |
+| 10 | **NFS 동적 프로비저너 이미지** (RWX용) | `~/mas-install/nfs-provisioner/` | `podman pull` + `save` — ⚠️ MAS/Red Hat 미러링에 **포함되지 않음** |
 
-**1. IBM Entitlement Key / 2. MAS 라이선스 / 3. Red Hat Pull Secret**은 각각 포털에서 수동으로 발급받아 저장합니다(자동화된 다운로드 명령이 없음, 위 목록의 링크 참고).
+#### 0. 디렉터리 생성 + linger 활성화
+
+다른 항목보다 먼저 실행합니다.
+
+🔴 **`linger`를 켜지 않으면 SSH 접속을 끊는 순간 미러링 컨테이너가 죽습니다.** `nohup`/`disown`은 SIGHUP만 막고, `systemd-logind`가 세션 종료 시 사용자 프로세스를 정리하는 것은 막지 못합니다. 8·9번이 수 시간~수십 시간 걸리므로 반드시 먼저 켜세요.
+
+**1) 실행**
 
 ```bash
-chmod 600 ~/mas-install/licenses/<entitlement-file>
-chmod 600 ~/mas-install/redhat/pull-secret.json
+mkdir -p ~/mas-install/{licenses,redhat,rpms,ocp,mas-cli,registry,nfs-provisioner,mirror}
+
+sudo loginctl enable-linger maximo
 ```
+
+**2) 확인 및 검증**
+
+```bash
+ls ~/mas-install
+loginctl show-user maximo | grep -i linger      # Linger=yes 여야 함
+```
+
+#### 1~3. IBM Entitlement Key / MAS 라이선스 / Red Hat Pull Secret
+
+자동 다운로드 명령이 없습니다. 위 표의 링크에서 브라우저로 발급받아 해당 경로에 저장합니다.
+
+**1) 실행** — 발급받은 파일을 저장한 뒤 권한을 제한합니다.
+
+```bash
+chmod 600 ~/mas-install/licenses/* ~/mas-install/redhat/pull-secret.json
+```
+
+**2) 확인 및 검증**
+
+```bash
+ls -l ~/mas-install/licenses/ ~/mas-install/redhat/
+head -c 60 ~/mas-install/redhat/pull-secret.json    # {"auths":{... 로 시작
+```
+
+#### 4. 사이트 Bastion용 RPM 오프라인 저장소
 
 **4. 사이트 Bastion용 RPM 오프라인 저장소**
 
-🔴 **폐쇄망에서는 나중에 추가할 수 없으므로 아래 항목이 반드시 포함되어야 합니다.**
+사이트 Bastion(§3)에서 설치할 패키지를 RPM으로 내려받아 오프라인 저장소를 만듭니다. **폐쇄망에서는 나중에 추가할 수 없습니다.**
 
-| 패키지 | 왜 필요한가 |
+| 패키지 | 용도 |
 |---|---|
-| `podman` | 모든 `mas` CLI 실행 (§3.3 이후 전부) |
-| `dnsmasq`, `bind-utils` | DNS 서버 구성 및 `nslookup` 검증 (§3.2) |
+| `podman` | `mas` CLI 실행 (§3.3 이후) |
+| `dnsmasq`, `bind-utils` | DNS 서버·`nslookup` (§3.2) |
+| `chrony` | NTP 서버 (§3.2.1) |
 | `firewalld` | 방화벽 (§3.2) |
-| **`nfs-utils`** | Bastion을 RWX용 NFS 서버로 겸용 (§3.8.2 방식 A) |
-| **`nmstate`** | ⚠️ **Agent-based Installer가 정적 네트워크(`networkConfig`) 검증에 `nmstatectl`을 요구** (§3.6) — 없으면 ISO 생성 단계에서 실패 |
-| **`chrony`** | 폐쇄망 NTP 서버 (§3.2.1) — 시간 동기 실패는 인증서/클러스터 오류로 이어짐 |
-| `openssl`, `jq`, `rsync`, `tar`, `gzip`, `createrepo_c` | 각종 검증·전달·저장소 작업 |
+| `nfs-utils` | RWX용 NFS 서버 (§3.8.2) |
+| `nmstate` | Agent-based Installer의 `networkConfig` 검증 (§3.6) |
+| `jq` | Pull Secret 병합 (§3.6, §3.7.2) |
+| `tar`, `gzip` | `oc`·`mirror-registry` 압축 해제 (§3.4, §3.6) |
+| `openssl`, `rsync`, `createrepo_c` | 예비 |
+
+⚠️ 이 표는 **§3.1의 설치 목록과 동일**해야 합니다.
+
+**1) 실행** (root 계정)
 
 ```bash
-dnf download \
-  --resolve \
-  --alldeps \
-  --destdir "$HOME/mas-install/rpms" \
-  podman openssl jq rsync tar gzip \
-  dnsmasq bind-utils firewalld createrepo_c \
-  nfs-utils nmstate chrony
+rm -rf /home/maximo/mas-install/rpms
+mkdir -p /home/maximo/mas-install/rpms
 
-createrepo_c "$HOME/mas-install/rpms"
+dnf download --resolve --alldeps --disablerepo=mas-offline \
+  --destdir /home/maximo/mas-install/rpms \
+  podman openssl jq rsync tar gzip dnsmasq bind-utils firewalld createrepo_c \
+  nfs-utils nmstate chrony \
+  sssd-nfs-idmap container-selinux passt-selinux nmstate-libs
 
-# 핵심 패키지 포함 확인
-ls ~/mas-install/rpms | grep -iE 'nfs-utils|nmstate|chrony'
+createrepo_c /home/maximo/mas-install/rpms
+chown -R maximo:maximo /home/maximo/mas-install/rpms
 ```
 
-세 개 모두 나와야 합니다. `nmstate`가 빠지면 §3.6에서 `openshift-install agent create image`가 실패합니다.
+- `--alldeps` — 이미 설치된 의존성까지 받습니다. 빼면 사이트에서 깨집니다.
+- 뒤 4개는 **조건부(rich) 의존성**이라 `--resolve`가 잡지 못해 직접 지정합니다. §3.1에서는 dnf가 자동으로 끌어오므로 설치 목록에는 넣지 않습니다.
 
-**5. OpenShift Client / Installer / checksum**
+| 패키지 | 요구 조건 |
+|---|---|
+| `sssd-nfs-idmap` | `nfs-utils` 설치 시 `sssd-common`이 요구 |
+| `container-selinux` | `podman`이 `selinux-policy` 있을 때 요구 |
+| `passt-selinux` | `passt`가 `selinux-policy-targeted` 있을 때 요구 |
+| `nmstate-libs` | `nmstate`와 버전 일치 필요 |
+
+**2) 확인 및 검증**
 
 ```bash
-export OCP_VERSION=4.20.30
-export OCP_DIR="$HOME/mas-install/ocp"
-export OCP_BASE_URL="https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/$OCP_VERSION"
+# 서명·체크섬 — 출력이 없어야 정상
+rpm -K /home/maximo/mas-install/rpms/*.rpm | grep -v 'digests signatures OK'
 
-mkdir -p "$OCP_DIR"
+# 의존성 완결성 — 미해결 0건이어야 정상
+dnf repoclosure --repofrompath=chk,file:///home/maximo/mas-install/rpms \
+  --repo=chk --check=chk
+```
 
-curl -fL "$OCP_BASE_URL/openshift-client-linux.tar.gz" -o "$OCP_DIR/openshift-client-linux.tar.gz"
-curl -fL "$OCP_BASE_URL/openshift-install-linux.tar.gz" -o "$OCP_DIR/openshift-install-linux.tar.gz"
-curl -fL "$OCP_BASE_URL/sha256sum.txt" -o "$OCP_DIR/sha256sum.txt"
+미해결이 나오면 그 패키지명을 1)의 목록에 추가하고 반복합니다.
 
-cd "$OCP_DIR"
+```
+package: podman-5:5.4.0-1.el9.x86_64 from chk
+  unresolved deps (1):
+    (container-selinux if selinux-policy)     ← container-selinux 를 추가
+```
+
+🔴 `--skip-broken` / `--nobest`로 넘기지 마세요. 사이트에서 그대로 재현되고, 그때는 인터넷이 없습니다.
+
+#### 5. OpenShift Client / Installer / checksum
+
+§3.6에서 `oc`·`kubectl`·`openshift-install`로 사용합니다.
+
+**1) 실행**
+
+```bash
+export OCP_BASE_URL="https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/4.20.30"
+
+curl -fL "$OCP_BASE_URL/openshift-client-linux.tar.gz"  -o ~/mas-install/ocp/openshift-client-linux.tar.gz
+curl -fL "$OCP_BASE_URL/openshift-install-linux.tar.gz" -o ~/mas-install/ocp/openshift-install-linux.tar.gz
+curl -fL "$OCP_BASE_URL/sha256sum.txt"                  -o ~/mas-install/ocp/sha256sum.txt
+```
+
+**2) 확인 및 검증** — 두 파일 모두 `OK`여야 합니다.
+
+```bash
+cd ~/mas-install/ocp
 sha256sum -c <(grep -E 'openshift-(client|install)-linux.tar.gz' sha256sum.txt)
 ```
 
-두 파일 모두 `OK`로 표시돼야 합니다.
+#### 6. MAS CLI 이미지
 
-**6. MAS CLI 이미지** (인터넷 연결 서버에서 pull 후 tar로 저장)
+§3.3에서 불러와 `mas` 명령을 실행합니다.
+
+**1) 실행**
 
 ```bash
 podman pull --arch amd64 quay.io/ibmmas/cli:23.4.1
-podman image inspect quay.io/ibmmas/cli:23.4.1 --format '{{.Os}}/{{.Architecture}}'
-
 podman save -o ~/mas-install/mas-cli/mas-cli-23.4.1.tar quay.io/ibmmas/cli:23.4.1
-sha256sum ~/mas-install/mas-cli/mas-cli-23.4.1.tar
 ```
 
-검사 결과는 `linux/amd64`여야 합니다.
+**2) 확인 및 검증** — `linux/amd64`여야 합니다.
 
-**7. Mirror Registry 설치 패키지**
+```bash
+podman image inspect quay.io/ibmmas/cli:23.4.1 --format '{{.Os}}/{{.Architecture}}'
+ls -lh ~/mas-install/mas-cli/
+```
 
-Red Hat OpenShift Downloads(<https://console.redhat.com/openshift/downloads>)의 **"mirror registry for Red Hat OpenShift"** 항목에서 RHEL 9 x86_64용 파일을 받습니다. 로그인 필요/시간 제한이 있는 다운로드 URL이라 브라우저로 직접 받거나, 발급된 URL을 아래처럼 사용합니다.
+#### 7. Mirror Registry 설치 패키지
+
+§3.4에서 폐쇄망 Registry를 구축하는 데 사용합니다. [Red Hat OpenShift Downloads](https://console.redhat.com/openshift/downloads)의 **"mirror registry for Red Hat OpenShift"** 에서 RHEL 9 x86_64용 URL을 브라우저로 발급받습니다(로그인 필요, URL에 유효시간 있음).
+
+**1) 실행** — 발급받은 URL을 붙여넣습니다.
 
 ```bash
 read -r MIRROR_REGISTRY_DOWNLOAD_URL
@@ -258,40 +355,39 @@ curl -fL "$MIRROR_REGISTRY_DOWNLOAD_URL" -o ~/mas-install/registry/mirror-regist
 unset MIRROR_REGISTRY_DOWNLOAD_URL
 ```
 
-> `oc-mirror` 플러그인은 별도로 받을 필요가 없습니다 — §1.2에서 확인했듯 MAS CLI 이미지(`quay.io/ibmmas/cli:23.4.1`) 안에 이미 내장되어 있습니다.
-
-**8. Red Hat 콘텐츠 이미지 세트**
-
-✅ **검증 완료** (`quay.io/ibmmas/cli:23.4.1 mas mirror-redhat-images --help` 실행 결과, 2026-07-29): 아래 플래그(`--mode`, `--dir`, `--pullsecret`, `--mirror-platform`, `--mirror-operators`, `--release`, `--min-version`, `--max-version`, `--no-confirm`)는 모두 실제 존재하는 이름으로 확인됐습니다. `-H/-P/-u/-p`(레지스트리 접속 정보)는 `direct`/`from-filesystem` 모드에서만 필요하고 `to-filesystem` 모드(아래 명령)에서는 불필요합니다.
-
-이 단계는 수 시간이 걸릴 수 있어 SSH 연결이 끊겨도 계속 진행되도록 **`nohup`으로 백그라운드 실행**합니다.
-
-**첫 실행이면 아래 블록을 건너뛰세요.** 재시도 시에는 아래 "재시도 원칙"에 따라 판단합니다.
-
-> ### 🔁 재시도 원칙 (§5.2·§5.3 실측 근거)
->
-> **미러링이 실패했다고 무조건 디렉터리를 비우지 마세요.** 원인에 따라 대응이 다릅니다.
->
-> | 실패 원인 | 대응 | 이유 |
-> |---|---|---|
-> | 네트워크/레지스트리 타임아웃, 개별 이미지 실패 | **비우지 말고 그대로 재실행** | 이미 받은 콘텐츠는 건너뛰므로 훨씬 빠름 (§5.2에서 23GB 보존 확인) |
-> | SELinux/권한 오류 (§5.1) | 원인(`:Z`→`:z`) 해결 후 **비우지 않고** 재실행 | 데이터 자체는 정상 |
-> | 미러링 대상/버전/Registry 주소를 **변경**한 경우 | **완전 초기화** 후 재실행 | manifest·레이아웃이 달라짐 |
-> | 산출물이 손상된 것으로 판단될 때 | **완전 초기화** | — |
->
-> ⚠️ `rm -rf <dir>/*`는 `working-dir`(oc-mirror의 캐시·workspace·증분 메타데이터 포함)까지 삭제하므로 **다음 실행이 전체 재다운로드**가 됩니다. 완전 초기화가 정말 필요한 경우에만 사용하세요.
+**2) 확인 및 검증**
 
 ```bash
-rm -rf ~/mas-install/mirror/redhat/*
-ls -la ~/mas-install/mirror/redhat
+ls -lh ~/mas-install/registry/
+tar -tzf ~/mas-install/registry/mirror-registry-amd64.tar.gz | head
 ```
 
-```bash
-export LOCAL_DIR="$HOME/mas-install/mirror"
-export REGISTRY_AUTH_FILE="$HOME/mas-install/redhat/pull-secret.json"
+> `oc-mirror`는 별도로 받을 필요가 없습니다 — `oc`와 함께 MAS CLI 이미지에 내장되어 있습니다.
 
-nohup podman run --rm \
-  -v "$LOCAL_DIR":/mnt/workspace:z \
+#### 8. Red Hat 콘텐츠 이미지 세트
+
+OCP 4.20.30 플랫폼 release payload(190개)와 Red Hat Operator(379개)를 미러링합니다. 실측 **약 6시간** + tar 생성 15분. 산출물은 `mirror_000001.tar` **373GB**입니다.
+
+**0) 초기화** — 처음부터 다시 받을 때만 실행합니다. **재시도(이어받기)라면 건너뛰세요.**
+
+```bash
+podman ps
+podman kill $(podman ps -q --filter ancestor=quay.io/ibmmas/cli:23.4.1) 2>/dev/null
+
+rm -rf ~/mas-install/mirror/redhat
+rm -rf ~/mas-install/oc-mirror-cache
+rm -f ~/mas-install/mirror/redhat-mirror*.log ~/mas-install/mirror/redhat-imageset.log
+
+df -h /home
+```
+
+**1) 실행 — imageset 생성**
+
+`mas mirror-redhat-images`로 `imageset-ocp4.20.yml`과 `config.json`을 만들고, 생성되면 중단합니다. 미러링은 2)에서 수행합니다.
+
+```bash
+podman run --rm --name mas-imageset \
+  -v "$HOME/mas-install/mirror":/mnt/workspace:z \
   -v "$HOME/mas-install/redhat":/mnt/redhat:ro,z \
   quay.io/ibmmas/cli:23.4.1 mas mirror-redhat-images \
   --mode to-filesystem \
@@ -303,100 +399,114 @@ nohup podman run --rm \
   --min-version 4.20.30 \
   --max-version 4.20.30 \
   --no-confirm \
+  > "$HOME/mas-install/mirror/redhat-imageset.log" 2>&1 &
+
+until [ -s ~/mas-install/mirror/redhat/imageset-ocp4.20.yml ] \
+   && [ -s ~/mas-install/mirror/redhat/config.json ]; do sleep 5; done
+
+podman kill mas-imageset
+
+# 래퍼를 중단하면 working-dir이 반쯤 만들어진 채 남습니다.
+# 그대로 두면 2)가 "failed to find release image in index"로 실패하므로 삭제합니다.
+rm -rf ~/mas-install/mirror/redhat/working-dir ~/mas-install/mirror/redhat/logs
+
+ls -la ~/mas-install/mirror/redhat/
+```
+
+`config.json`과 `imageset-ocp4.20.yml` **두 개만** 남아야 합니다.
+
+**2) 실행 — 미러링**
+
+```bash
+mkdir -p ~/mas-install/oc-mirror-cache
+
+nohup podman run --rm \
+  -v "$HOME/mas-install/mirror":/mnt/workspace:z \
+  -v "$HOME/mas-install/oc-mirror-cache":/mnt/cache:z \
+  -e DOCKER_CONFIG=/mnt/workspace/redhat \
+  quay.io/ibmmas/cli:23.4.1 \
+  oc mirror --remove-signatures --v2 \
+    -c /mnt/workspace/redhat/imageset-ocp4.20.yml \
+    file:////mnt/workspace/redhat \
+    --cache-dir /mnt/cache \
+    --image-timeout 60m \
   > "$HOME/mas-install/mirror/redhat-mirror.nohup.log" 2>&1 &
 
 disown
 echo "PID: $!"
 ```
 
-**진행 상황 확인 명령** (다른 세션에서, 또는 같은 세션에서 언제든):
+| 옵션 | 이유 |
+|---|---|
+| `--cache-dir /mnt/cache` | 캐시 기본값은 컨테이너 내부 `$HOME`이라 `--rm` 종료 시 소실됩니다. 호스트로 빼야 실패 후 이어받기가 됩니다. |
+| `--image-timeout 60m` | 기본 10분으로는 `rhoai` 등 대용량 이미지가 완료되지 않습니다. |
+
+**3) 확인 및 검증**
+
+진행 중 — `oc-mirror-cache`가 계속 커지면 정상입니다.
 
 ```bash
-# nohup 자체 출력(대화형 진행률/오류)
+watch -n 10 'du -sh ~/mas-install/oc-mirror-cache ~/mas-install/mirror/redhat; df -h /home | tail -1; podman ps --format "{{.Status}}"'
+```
+
+```bash
 tail -f ~/mas-install/mirror/redhat-mirror.nohup.log
 
-# ansible 래퍼 로그 (파일명에 실행 시각이 매번 바뀌므로 와일드카드로 최신 것 확인)
-tail -f ~/mas-install/mirror/redhat/logs/mirror-*-redhat.log
+# 타임아웃 발생 여부 (0 이어야 정상)
+grep -c "context deadline exceeded" ~/mas-install/mirror/redhat-mirror.nohup.log
 
-# oc-mirror 내부 상세 로그 (실제 이미지별 복사 성공/실패, 파일명 고정)
-tail -f ~/mas-install/mirror/redhat/logs/mirror-to-filesystem-ocp4.20.log
-
-# 프로세스가 살아서 CPU를 쓰고 있는지 (이름은 oc-mirror, 공백 아닌 하이픈)
-ps aux | grep -i mirror | grep -v grep
-
-# 받은 용량이 계속 늘어나는지 (⚠️ 아래 참고 — 이 디렉터리는 한동안 안 늘어날 수 있음)
-watch -n 15 'du -sh ~/mas-install/mirror/redhat'
-
-# 실제 진행량은 컨테이너 내부 저장소에서 확인 (아래 ⚠️ 참고)
-podman system df -v
-
-# 지금까지 실패한 이미지가 있는지 (완료 후 최종 확인용)
-grep -c ERROR ~/mas-install/mirror/redhat/logs/mirror-to-filesystem-ocp4.20.log
+# 실패한 Operator (위 값이 0이 아닐 때)
+grep -ohP 'Operators: \[\K[^\]]+' ~/mas-install/mirror/redhat/working-dir/logs/*.txt | sort | uniq -c | sort -rn
 ```
 
-이 명령이 미러링하는 대상(공식 문서 및 실제 실행 로그 확인):
-- **OCP 4.20.30 플랫폼 release payload**
-- **Red Hat Operator 다수**: 공식 문서에는 "필수 3종(DRO, Cert Manager, Grafana)"만 명시돼 있으나, 실제 실행 로그에서는 이보다 훨씬 많은 Operator가 미러링되는 것이 확인됨 — Strimzi/Kafka, OpenShift Serverless(Knative), Authorino, ODF(OpenShift Data Foundation), Grafana, PostgreSQL 등. "이 단계를 건너뛰면 MAS 설치가 실패한다"고 공식 문서에 명시됨
-- 참고 저장공간: 공식 문서 기준 최소 약 **80GB** — 위 관찰 결과 실제로는 이보다 클 수 있음, `du -sh`로 실측 필요
+완료 판정 — 로그 마지막이 아래 형태여야 하고, `👋 Goodbye` **뒤에 `[ERROR]` 줄이 없어야** 합니다.
 
-⚠️ **중요 (실제 실행으로 확인, 2026-07-29)**: `-d /mnt/workspace/redhat`로 지정한 목적지 디렉터리는 미러링 도중 한동안 용량이 거의 늘지 않을 수 있습니다. oc-mirror가 이미지를 먼저 **컨테이너 내부 저장소(podman 로컬 볼륨)**에 캐시했다가 나중에 목적지로 내보내는 것으로 보이며, 실제 진행량은 `du -sh` 대신 `podman system df -v`의 해당 컨테이너 `SIZE` 컬럼으로 확인해야 정확합니다. **이 컨테이너는 `--rm` 옵션으로 실행되므로, 도중에 프로세스를 중단(kill)하면 컨테이너 내부에 쌓인 진행분(수십 GB)이 전부 소실됩니다 — 완료될 때까지 절대 중단하지 마세요.**
+```
+✓  190 / 190 release images mirrored successfully
+✓  379 / 379 operator images mirrored successfully
+📦 Preparing the tarball archive...
+👋 Goodbye, thank you for using oc-mirror
+```
 
-**9. MAS 콘텐츠 이미지 세트**
+🔴 **하나라도 실패하면 tar를 만들지 않습니다.** `✗ 373 / 379` 처럼 나오면 실패이며, 대상에서 제외할 Operator를 정하거나 재실행해야 합니다.
 
-Red Hat 콘텐츠 미러링과 마찬가지로 시간이 오래 걸리므로 **`nohup`으로 백그라운드 실행**합니다. 하나의 스크립트로 묶지 않고 **Stage별로 독립된 `nohup` 프로세스 + 로그 파일**로 분리합니다 — 하나가 실패해도 다른 Stage 로그에 영향이 없고, 어디까지 끝났는지 명확합니다. 앞 Stage가 끝난 걸 확인한 뒤 다음 Stage를 실행하세요.
+산출물은 tar 하나입니다.
 
-✅ **검증 완료 (실제 실행으로 확인, 2026-07-29)**: `mas mirror-images`는 `mas mirror-redhat-images`와 달리 **`to-filesystem` 모드에서도 `-H/-P/-u/-p`가 필수**입니다(생략하면 인자 파싱에 실패해 `--help`만 출력하고 종료됨).
-
-🔴 **여기에는 최종 폐쇄망 Registry의 실제 주소를 넣으세요.** 공식 가이드는 Stage 0에서 `REGISTRY_HOST`/`REGISTRY_PORT`/`REGISTRY_USERNAME`/`REGISTRY_PASSWORD`를 한 번 export하고 모든 Stage가 이를 상속하도록 설계되어 있습니다(`--help`에도 *"each option may also be defined by setting the appropriate environment variable"* 명시). Registry Host/Port는 목적지 이미지 경로 생성에 사용되므로 더미값을 넣는 것은 권장되지 않습니다.
-
-<details>
-<summary>⚠️ 이번 배포는 더미값(<code>localhost:443</code>)으로 진행했으며, <b>실측 결과 산출물에는 영향이 없음을 확인</b>했습니다 (2026-07-30) — 클릭해서 근거 보기</summary>
-
-`mas mirror-images`는 모드별로 manifest를 **3개** 생성하며, 목적지 표기가 각각 다릅니다.
-
-| manifest | 목적지 표기 | 이번 실행에서 |
-|---|---|---|
-| `manifests/direct/` | `localhost:443/cp/mas/...` | 미사용 |
-| **`manifests/to-filesystem/`** | **`file:///cp/mas/...`** | ✅ 실제 사용 — 레지스트리 주소 없음 |
-| `manifests/from-filesystem/` | `localhost:443/...` | 아직 미사용 (§3.5에서 재생성됨) |
-
-실증 확인 결과:
 ```bash
-# to-filesystem manifest는 file:/// 목적지 → 레지스트리 주소 무관
-head -3 ~/mas-install/mirror/core/manifests/to-filesystem/ibm-mas_9.2.0.txt
-#   cp.icr.io/cp/mas/accapppoints@sha256:...=file:///cp/mas/accapppoints:3.11.74-amd64
-
-# 디스크 레이아웃도 경로 기반 (localhost:443 디렉터리 없음)
-ls ~/mas-install/mirror/core/v2/     # → cp, cpopen 만 존재
+ls -lh ~/mas-install/mirror/redhat/mirror_*.tar      # 실측 373GB
 ```
 
-manifest들은 매 실행 시 CASE 번들에서 재생성되므로(ansible 태스크 `Generate the mirror manifest from the CASE bundle`, `Copy images-mapping-from-filesystem`), §3.5의 `from-filesystem` 실행 시 실제 Registry 주소로 다시 만들어집니다. 따라서 **이미 미러링한 데이터를 다시 받을 필요는 없습니다.**
+⚠️ 로그가 이미지 복사 도중 끊기고 `container not running: No such process`로 끝났다면 **SSH 세션 종료로 컨테이너가 죽은 것**입니다(§4.4).
 
-</details>
+실패했으면 **2)를 그대로 다시 실행**합니다 — 캐시에 있는 것은 건너뜁니다(§4.3 참고). 성공 후 캐시는 삭제합니다.
 
-**공통 (한 번만 export)**:
+```bash
+rm -rf ~/mas-install/oc-mirror-cache
+```
+
+#### 9. MAS 콘텐츠 이미지 세트
+
+Catalog/Core, Manage + Maximo IT, 공통 의존성 + Db2, CLI를 **순차 미러링**합니다. 앞 단계 완료를 확인한 뒤 다음을 실행하세요 — 동시 실행하면 SELinux 라벨이 충돌합니다(§4.1).
+
+⛔ **Cloud Pak for Data는 받지 않습니다.** `--mirror-cp4d`, `--mirror-wsl`, `--mirror-wml`, `--mirror-spark`, `--mirror-cognos`를 어떤 명령에도 넣지 마세요 — 이번 구성에 불필요하고 용량이 매우 큽니다. RWX를 NFS로 하므로 `--mirror-odf`도 제외합니다.
+
+**1) 실행 — 환경변수** (셸마다 한 번)
+
+`to-filesystem` 모드에서도 `-H/-P/-u/-p`가 필수입니다(생략하면 `--help`만 출력하고 종료). Registry Host/Port는 목적지 이미지 경로 생성에 쓰이므로 **최종 폐쇄망 Registry의 실제 값**을 넣으세요.
 
 ```bash
 export LOCAL_DIR="$HOME/mas-install/mirror"
 export MIRROR_SINGLE_ARCH=amd64
 export IBM_ENTITLEMENT_KEY=$(cat ~/mas-install/licenses/entitlement_key.key)
 
-# 최종 폐쇄망 Registry의 실제 값 (더미값 대신 이 값을 사용)
-export REGISTRY_HOST=registry.<base-domain>
+export REGISTRY_HOST=registry.mas-it.itmsg.co.kr
 export REGISTRY_PORT=8443
-export REGISTRY_USERNAME=<registry-user>
+export REGISTRY_USERNAME=masadmin
 read -s REGISTRY_PASSWORD
 export REGISTRY_PASSWORD
 ```
 
-**Stage 1: Core + Catalog**
-
-**첫 실행이면 이 블록을 건너뛰세요.** 재시도 시에는 §2.3의 "재시도 원칙"에 따라 판단합니다 — 네트워크 오류면 **비우지 말고** 그대로 재실행하는 것이 빠릅니다.
-
-```bash
-rm -rf ~/mas-install/mirror/core/*
-ls -la ~/mas-install/mirror/core
-```
+**2) 실행 — core** (Catalog + MAS Core, 약 16GB)
 
 ```bash
 nohup podman run --rm \
@@ -409,29 +519,24 @@ nohup podman run --rm \
   -c v9-260625-amd64 -C 9.2.x \
   --mirror-catalog --mirror-core \
   --ibm-entitlement "$IBM_ENTITLEMENT_KEY" \
-  --no-confirm > "$HOME/mas-install/mirror/stage1-core.nohup.log" 2>&1 &
+  --no-confirm > "$HOME/mas-install/mirror/stage-core.nohup.log" 2>&1 &
+
 disown
-echo "Stage1 PID: $!"
 ```
 
-Stage 1 진행 상황 확인 명령 (로그 확인 + 실제 다운로드 진행 확인 — ★ `podman system df -v`가 아니라 `du -sh`로 봐야 함, 위 ✅ 정정 참고):
+진행 확인 : 프로세스 수가 `1` 이상이면 실행 중입니다. `0`이면 종료된 것이니 아래 검증으로 넘어갑니다
 
 ```bash
-tail -f ~/mas-install/mirror/stage1-core.nohup.log
+watch -n 10 'du -sh ~/mas-install/mirror/core; ps aux | grep -c "[m]as mirror-images"'
 ```
+
+검증 : 프로세스가 사라진 뒤 `[SUCCESS] IBM Maximo Application Suite Core`가 나오고 `[FAILURE]`가 없어야 함
 
 ```bash
-watch -n 15 'du -sh ~/mas-install/mirror/core/* 2>/dev/null'
+tr '\r' '\n' < ~/mas-install/mirror/stage-core.nohup.log | grep -aE '\[SUCCESS\]|\[FAILURE\]'
 ```
 
-**Stage 2: Manage + Maximo IT** (Stage 1 완료 확인 후 실행)
-
-**첫 실행이면 이 블록을 건너뛰세요.** 재시도 시에는 §2.3의 "재시도 원칙"에 따라 판단합니다 — 네트워크 오류면 **비우지 말고** 그대로 재실행하는 것이 빠릅니다.
-
-```bash
-rm -rf ~/mas-install/mirror/apps/*
-ls -la ~/mas-install/mirror/apps
-```
+**3) 실행 — apps** (Manage + Maximo IT, 약 25GB)
 
 ```bash
 nohup podman run --rm \
@@ -444,33 +549,30 @@ nohup podman run --rm \
   -c v9-260625-amd64 -C 9.2.x \
   --mirror-manage --mirror-icd \
   --ibm-entitlement "$IBM_ENTITLEMENT_KEY" \
-  --no-confirm > "$HOME/mas-install/mirror/stage2-apps.nohup.log" 2>&1 &
+  --no-confirm > "$HOME/mas-install/mirror/stage-apps.nohup.log" 2>&1 &
+
 disown
-echo "Stage2 PID: $!"
 ```
 
-Stage 2 진행 상황 확인 명령 (로그 확인 + 실제 다운로드 진행 확인):
+진행 확인 : 프로세스 수가 `1` 이상이면 실행 중입니다. `0`이면 종료된 것이니 아래 검증으로 넘어갑니다
 
 ```bash
-tail -f ~/mas-install/mirror/stage2-apps.nohup.log
+watch -n 10 'du -sh ~/mas-install/mirror/apps; ps aux | grep -c "[m]as mirror-images"'
 ```
+
+검증 : 프로세스가 사라진 뒤 `[SUCCESS] IBM Maximo Manage`가 나오고 `[FAILURE]`가 없어야 함
 
 ```bash
-watch -n 15 'du -sh ~/mas-install/mirror/apps/* 2>/dev/null'
+tr '\r' '\n' < ~/mas-install/mirror/stage-apps.nohup.log | grep -aE '\[SUCCESS\]|\[FAILURE\]'
 ```
 
-**Stage 3: Cloud Pak for Data (CP4D) — ⛔ 설치하지 않음, 실행 금지**
-
-공식 IBM MAS CLI 이미지 미러링 가이드의 5단계 중 Stage 3은 Cloud Pak for Data(Watson Studio, Watson Machine Learning, Spark, Cognos 등) 콘텐츠입니다. **이번 설치는 Core + Manage + Maximo IT만 대상이며 CP4D는 사용하지 않으므로(§0 "미사용 대상" 참고), Stage 3은 의도적으로 건너뜁니다.** `--mirror-cp4d`, `--mirror-wsl`, `--mirror-wml`, `--mirror-spark`, `--mirror-cognos` 플래그는 어떤 Stage 명령에도 포함하지 않습니다. 실수로라도 이 플래그들을 넣지 않도록 주의하세요 — 용량이 매우 크고(CP4D 전체 약 273GB, MAS 8.10 기준 참고치) 이번 구성에는 불필요합니다.
-
-**Stage 4: 공통 의존성 + 내부 Db2** (Stage 2 완료 확인 후 실행)
-
-**첫 실행이면 이 블록을 건너뛰세요.** 재시도 시에는 §2.3의 "재시도 원칙"에 따라 판단합니다 — 네트워크 오류면 **비우지 말고** 그대로 재실행하는 것이 빠릅니다.
+검증 : 🔴 **Maximo IT는 상태 목록에 나오지 않습니다** — Manage 확장이라 Manage 매니페스트에 포함됩니다. `extension-icd`가 있어야 §3.10에서 활성화할 수 있으므로 직접 확인하세요.
 
 ```bash
-rm -rf ~/mas-install/mirror/other/*
-ls -la ~/mas-install/mirror/other
+ls ~/mas-install/mirror/apps/v2/cp/manage/ | grep -i icd
 ```
+
+**4) 실행 — other** (Mongo/TSM/SLS/CFS/Db2, 약 43GB)
 
 ```bash
 nohup podman run --rm \
@@ -483,29 +585,24 @@ nohup podman run --rm \
   -c v9-260625-amd64 -C 9.2.x \
   --mirror-mongo --mirror-tsm --mirror-sls --mirror-cfs --mirror-db2 \
   --ibm-entitlement "$IBM_ENTITLEMENT_KEY" \
-  --no-confirm > "$HOME/mas-install/mirror/stage4-other.nohup.log" 2>&1 &
+  --no-confirm > "$HOME/mas-install/mirror/stage-other.nohup.log" 2>&1 &
+
 disown
-echo "Stage4 PID: $!"
 ```
 
-Stage 4 진행 상황 확인 명령 (로그 확인 + 실제 다운로드 진행 확인):
+진행 확인 : 프로세스 수가 `1` 이상이면 실행 중입니다. `0`이면 종료된 것이니 아래 검증으로 넘어갑니다
 
 ```bash
-tail -f ~/mas-install/mirror/stage4-other.nohup.log
+watch -n 10 'du -sh ~/mas-install/mirror/other; ps aux | grep -c "[m]as mirror-images"'
 ```
+
+검증 : 프로세스가 사라진 뒤 `[SUCCESS] Selected Dependencies`가 나오고 `[FAILURE]`가 없어야 함
 
 ```bash
-watch -n 15 'du -sh ~/mas-install/mirror/other/* 2>/dev/null'
+tr '\r' '\n' < ~/mas-install/mirror/stage-other.nohup.log | grep -aE '\[SUCCESS\]|\[FAILURE\]'
 ```
 
-**Stage 5: CLI 자체 이미지** (Stage 4 완료 확인 후 실행)
-
-**첫 실행이면 이 블록을 건너뛰세요.** 재시도 시에는 §2.3의 "재시도 원칙"에 따라 판단합니다 — 네트워크 오류면 **비우지 말고** 그대로 재실행하는 것이 빠릅니다.
-
-```bash
-rm -rf ~/mas-install/mirror/cli/*
-ls -la ~/mas-install/mirror/cli
-```
+**5) 실행 — cli** (MAS CLI, 약 5GB)
 
 ```bash
 nohup podman run --rm \
@@ -518,180 +615,233 @@ nohup podman run --rm \
   -c v9-260625-amd64 -C 9.2.x \
   --mirror-cli \
   --ibm-entitlement "$IBM_ENTITLEMENT_KEY" \
-  --no-confirm > "$HOME/mas-install/mirror/stage5-cli.nohup.log" 2>&1 &
+  --no-confirm > "$HOME/mas-install/mirror/stage-cli.nohup.log" 2>&1 &
+
 disown
-echo "Stage5 PID: $!"
 ```
 
-Stage 5 진행 상황 확인 명령 (로그 확인 + 실제 다운로드 진행 확인):
+진행 확인 : 프로세스 수가 `1` 이상이면 실행 중입니다. `0`이면 종료된 것이니 아래 검증으로 넘어갑니다
 
 ```bash
-tail -f ~/mas-install/mirror/stage5-cli.nohup.log
+watch -n 10 'du -sh ~/mas-install/mirror/cli; ps aux | grep -c "[m]as mirror-images"'
 ```
 
+검증 : 프로세스가 사라진 뒤 `[SUCCESS] IBM Maximo CLI`가 나오고 `[FAILURE]`가 없어야 함
+
 ```bash
-watch -n 15 'du -sh ~/mas-install/mirror/cli/* 2>/dev/null'
+tr '\r' '\n' < ~/mas-install/mirror/stage-cli.nohup.log | grep -aE '\[SUCCESS\]|\[FAILURE\]'
 ```
 
-**공통 진행 상황 확인 명령** (아무 Stage든 실행 중일 때):
+**6) 확인 및 검증** — 4단계 전체
+
+검증 : `[SUCCESS]` 4건, `[FAILURE]` **0건**
 
 ```bash
-# 프로세스가 살아있는지
-ps aux | grep -i "mas mirror-images" | grep -v grep
-
-# Stage별 받은 용량 (★ 이게 진짜 진행 지표 — 아래 참고)
-du -sh ~/mas-install/mirror/core/* ~/mas-install/mirror/apps/* ~/mas-install/mirror/other/* ~/mas-install/mirror/cli/* 2>/dev/null
+for f in ~/mas-install/mirror/stage-*.nohup.log; do
+  echo "===== $(basename $f)"
+  tr '\r' '\n' < "$f" | grep -aE '\[SUCCESS\]|\[FAILURE\]'
+done
 ```
 
-⚠️→✅ **정정 (실제 실행으로 확인, 2026-07-29)**: `mas mirror-images`는 `mas mirror-redhat-images`(oc-mirror 기반, 컨테이너 내부 캐시를 거쳐 나중에 목적지로 내보냄)와 달리, **`oc image mirror --dir=...`로 목적지(`/mnt/registry/<stage>/v2/`)에 바로 씁니다.** 그래서 이 Stage들은 `podman system df -v`(컨테이너 내부 SIZE)가 계속 31MB 근처로 고정돼 있어도 정상이며, **진짜 진행 상황은 `du -sh ~/mas-install/mirror/<stage>/v2` (또는 위 명령처럼 하위 디렉터리 전체)로 확인해야 합니다.** (위 8번 Red Hat 콘텐츠는 반대로 `podman system df -v`가 맞는 지표이니 헷갈리지 않도록 주의.)
+🔴 **`[FAILURE]`와 `[SUCCESS]`가 같이 나올 수 있습니다.** 한 단계에서 여러 컴포넌트를 미러링하므로 일부만 실패할 수 있습니다. `[SUCCESS]` 개수만 세지 말고 **`[FAILURE]`가 0건인지** 확인하세요.
 
-또한 `mas mirror-images`는 이미지별 상세 진행 로그를 남기지 않습니다. `~/mas-install/mirror/<stage>/logs/mirror-*.log` 파일 하나만 있고, ansible의 "Run mirror command" 태스크가 끝나야 결과가 한꺼번에 찍히는 방식이라 진행 중에는 상세히 안 보입니다 — 대신 `du -sh`로 실시간 진행을 확인하세요.
+실패하면 디렉터리를 비우지 말고 **해당 단계를 그대로 다시 실행**합니다 — 이미 받은 이미지는 건너뜁니다.
 
-✅ **검증 완료** (`quay.io/ibmmas/cli:23.4.1 mas mirror-images --help` 실행 결과, 2026-07-29): `--mirror-icd`는 정확히 **"Mirror image for IBM Maximo IT (Separately entitled IBM Maximo Manage extension)"** — 즉 Maximo IT 자체를 가리키는 플래그이며 MongoDB와 무관합니다. MongoDB는 `--mirror-mongo`(또는 특정 버전이 필요하면 `--mirror-mongo-v7`)가 별도로 존재합니다. Stage 4에서 쓰는 `--mirror-mongo`는 그대로 맞습니다.
+#### 10. NFS 동적 프로비저너 이미지 (RWX용)
 
-참고로 `--help` 출력에서 추가로 확인된 플래그: `--mirror-odf`(OpenShift Data Foundation), `--mirror-everything`(전체 일괄 미러링). **이번 배포는 RWX를 외부 NFS로 결정했으므로 `--mirror-odf`는 실행하지 않습니다**(§3.8.2 참고). 나중에 ODF로 전환하려면 인터넷 연결 환경에서 이 미러링을 추가로 수행해야 합니다.
+§3.8.2에서 RWX StorageClass를 제공하는 `nfs-subdir-external-provisioner`입니다.
 
-**10. NFS 동적 프로비저너 이미지 (RWX용)**
+🔴 이 이미지는 **8번·9번 미러링 어느 쪽에도 포함되지 않습니다.** 커뮤니티 프로젝트라 별도로 받아야 하며, 폐쇄망 반입 후에는 확보할 수 없습니다.
 
-🔴 **주의**: 이 이미지는 **MAS 미러링(`mas mirror-images`)에도, Red Hat 미러링(`mas mirror-redhat-images`)에도 포함되지 않습니다.** 커뮤니티 프로젝트라 별도로 받아야 하며, 폐쇄망에 반입한 뒤에는 받을 수 없습니다. 이번 배포는 RWX를 Bastion NFS로 제공하므로(§3.8.2 방식 A) **반드시 지금 확보**해야 합니다.
-
-`nfs-subdir-external-provisioner`(이미지 1개, 구성 단순)를 사용합니다.
+**1) 실행**
 
 ```bash
-mkdir -p ~/mas-install/nfs-provisioner
-
-# 태그는 프로젝트 최신 릴리스를 확인해 조정 (v4.0.2는 널리 쓰이는 안정 버전)
 export NFS_PROV_IMAGE=registry.k8s.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2
+export NFS_PROV_REF=nfs-subdir-external-provisioner-4.0.18   # 릴리스 태그 고정
 
 podman pull --arch amd64 "$NFS_PROV_IMAGE"
-podman image inspect "$NFS_PROV_IMAGE" --format '{{.Os}}/{{.Architecture}}'
-
 podman save -o ~/mas-install/nfs-provisioner/nfs-subdir-external-provisioner.tar "$NFS_PROV_IMAGE"
-ls -lh ~/mas-install/nfs-provisioner/
-```
 
-배포용 YAML도 함께 받아둡니다 — 폐쇄망에서는 GitHub에 접근할 수 없습니다.
-
-⚠️ `master` 브랜치는 언제든 바뀔 수 있으므로 **릴리스 태그로 고정**하는 것이 안전합니다(아래는 이미지 버전과 맞춘 `nfs-subdir-external-provisioner-4.0.18` 예시 — 태그가 없으면 `master`로 대체).
-
-```bash
 cd ~/mas-install/nfs-provisioner
-export NFS_PROV_REF=nfs-subdir-external-provisioner-4.0.18   # 실패 시 master 로 변경
-
 for f in rbac.yaml deployment.yaml class.yaml test-claim.yaml test-pod.yaml; do
   curl -fLO "https://raw.githubusercontent.com/kubernetes-sigs/nfs-subdir-external-provisioner/${NFS_PROV_REF}/deploy/$f" \
     || curl -fLO "https://raw.githubusercontent.com/kubernetes-sigs/nfs-subdir-external-provisioner/master/deploy/$f"
 done
-
-ls -la
 ```
 
-YAML 5개(`rbac`, `deployment`, `class`, `test-claim`, `test-pod`)가 모두 있어야 합니다 — 뒤 2개는 §3.8.4 검증에 사용합니다.
+**2) 확인 및 검증** — tar 1개 + YAML 5개, 이미지는 `linux/amd64`.
 
-✅ **확보 완료 (2026-07-30)**: `v4.0.2` 태그 유효(`linux/amd64` 확인), tar 43MB, YAML 5개 정상 수신. 받은 `deployment.yaml`은 반입 후 NFS 서버 주소/경로/이미지 경로를 수정해야 하며, 구체적인 `sed` 명령은 §3.8.2 방식 A의 ②에 실제 기본값 기준으로 정리해두었습니다.
+```bash
+podman image inspect "$NFS_PROV_IMAGE" --format '{{.Os}}/{{.Architecture}}'
+ls -lh ~/mas-install/nfs-provisioner/
+```
 
-> `csi-driver-nfs`를 대신 쓸 경우 CSI sidecar까지 5~6개 이미지(`csi-provisioner`, `csi-node-driver-registrar`, `livenessprobe` 등)를 모두 받아야 합니다 — 이번 배포에서는 단순함을 위해 `nfs-subdir` 방식을 택했습니다.
-
-이 이미지도 §2.5의 전달 대상에 포함해야 합니다(`nfs-provisioner/` 디렉터리).
+> `csi-driver-nfs`를 쓰면 CSI sidecar까지 5~6개 이미지를 받아야 합니다. 단순함을 위해 `nfs-subdir` 방식을 택했습니다.
 
 ### 2.4 설치 파일 최종 확인
 
-§2.3의 8/9번(Red Hat 콘텐츠, MAS 콘텐츠 Stage 1/2/4/5) 미러링이 모두 끝나면, 다음 단계(전달/설치)로 넘어가기 전 아래 순서로 정상 종료를 확인합니다.
+§2.3의 모든 항목이 끝나면, 반입 전에 아래를 전부 통과해야 합니다.
 
-**1) 디렉터리 구조 확인**
+기대 구조:
 
 ```text
 ~/mas-install/
-  licenses/   (entitlement_key.key, lincense_poc.dat)
-  redhat/     (pull-secret.json)
-  ocp/        (openshift-client-linux.tar.gz, openshift-install-linux.tar.gz, sha256sum.txt)
-  registry/   (mirror-registry-amd64.tar.gz)
-  mas-cli/    (mas-cli-23.4.1.tar)
-  rpms/            (사이트 Bastion용 RPM — nfs-utils 포함 확인 필요)
-  nfs-provisioner/ (nfs-subdir-external-provisioner.tar + rbac/deployment/class.yaml)
+  licenses/         entitlement_key.key, <license>.dat
+  redhat/           pull-secret.json
+  rpms/             RPM 229개 (135MB) + repodata/
+  ocp/              openshift-client-linux.tar.gz, openshift-install-linux.tar.gz, sha256sum.txt
+  mas-cli/          mas-cli-23.4.1.tar
+  registry/         mirror-registry-amd64.tar.gz
+  nfs-provisioner/  nfs-subdir-external-provisioner.tar + YAML 5개
   mirror/
-    redhat/   (mas mirror-redhat-images 결과물)
-    core/ apps/ other/ cli/  (mas mirror-images 결과물, Stage별)
+    redhat/         mirror_000001.tar 373GB + working-dir 25GB
+    core/ apps/ other/ cli/
 ```
 
-**2) 컨테이너가 정상 종료 확인**
+**1) 확인 및 검증**
+
+실행 : `podman ps -a`
+검증 : 결과가 없어야 함 (모든 미러링 컨테이너가 `--rm`으로 삭제됨)
 
 ```bash
 podman ps -a
 ```
 
-결과에 아무것도 안 나와야 합니다 (모든 미러링 컨테이너가 `--rm`으로 자동 삭제됨).
-
-**3) 각 단계 로그에서 성공/실패 확인** — `[SKIPPED]`는 정상(선택 안 한 항목), `[SUCCESS]`가 있어야 하고 `[FAILURE]`가 없어야 합니다.
+실행 : MAS 콘텐츠 Stage 결과
+검증 : Stage별로 `[SUCCESS]`가 나오고 `[FAILURE]`가 없어야 함
 
 ```bash
-grep -E "^\[SUCCESS\]|^\[FAILURE\]" ~/mas-install/mirror/redhat-mirror.nohup.log
-grep -E "^\[SUCCESS\]|^\[FAILURE\]" ~/mas-install/mirror/stage1-core.nohup.log
-grep -E "^\[SUCCESS\]|^\[FAILURE\]" ~/mas-install/mirror/stage2-apps*.nohup.log
-grep -E "^\[SUCCESS\]|^\[FAILURE\]" ~/mas-install/mirror/stage4-other.nohup.log
-grep -E "^\[SUCCESS\]|^\[FAILURE\]" ~/mas-install/mirror/stage5-cli.nohup.log
+grep -aE '\[SUCCESS\]|\[FAILURE\]' ~/mas-install/mirror/stage*.nohup.log
 ```
 
-**4) (Red Hat/oc-mirror 전용) 개별 이미지 실패 목록 확인** — MAS 콘텐츠(Stage 1/2/4/5)는 `working-dir` 구조가 없어 해당 없음, Red Hat 콘텐츠만 해당됩니다. 아래 결과가 비어 있어야(오류 없어야) 정상입니다.
+> `^` 앵커를 쓰면 안 됩니다 — `mas` CLI 출력에 ANSI 색상 코드가 앞에 붙어 매칭되지 않습니다.
+
+실행 : 🔴 Red Hat 산출물
+검증 : `mirror_000001.tar` 373GB. 없으면 §2.3의 8번으로 돌아가세요
 
 ```bash
-find "$LOCAL_DIR" -path '*/working-dir/logs/mirroring_errors_*' -type f -size +0c -print
+ls -lh ~/mas-install/mirror/redhat/mirror_*.tar
 ```
 
-**5) 최종 용량 확인** (더 이상 안 늘어나는지 몇 분 간격으로 재확인)
+실행 : Red Hat 미러링 최종 결과
+검증 : release **190/190**, operator **379/379** 모두 `✓`
 
 ```bash
-du -sh ~/mas-install/mirror/redhat ~/mas-install/mirror/core/* ~/mas-install/mirror/apps/* ~/mas-install/mirror/other/* ~/mas-install/mirror/cli/* 2>/dev/null
+grep -A3 '=== Results ===' ~/mas-install/mirror/redhat-mirror.nohup.log | tail -4
+```
+
+실행 : 최종 용량
+검증 : redhat 398G / core 16G / apps 25G / other 43G / cli 4.9G. 몇 분 간격으로 재확인해 더 이상 안 늘어야 함
+
+```bash
+du -sh ~/mas-install/mirror/*
+df -h /home
 ```
 
 ### 2.5 설치 파일 전달
 
-§2.4의 최종 확인이 모두 통과하면 전달용 tar 파일을 생성해 실제 사이트 Bastion 서버로 옮겨서 설치합니다.
+§2.4를 통과하면 전달 매체로 복사해 사이트 Bastion에 반입합니다. 반입 대상은 **489GB**입니다. 라이선스·Pull Secret은 일반 매체와 분리된 절차로 반입하는 것을 권장합니다.
 
-**1) 체크섬 생성** (무결성 검증용)
+**1) 실행 — 체크섬 생성**
+
+489GB를 해싱하므로 수 시간 걸립니다.
 
 ```bash
 cd "$HOME/mas-install"
-find licenses redhat ocp registry mas-cli rpms nfs-provisioner mirror \
-  -type f -print0 | sort -z | xargs -0 sha256sum > transfer-files.sha256
+nohup sh -c "find licenses redhat ocp registry mas-cli rpms nfs-provisioner mirror \
+  -type f -print0 | sort -z | xargs -0 sha256sum > transfer-files.sha256" &
 ```
 
-**2) 전달 매체로 옮길 tar 조각 생성** — 실제 사이트 서버가 USB/외장디스크로 반입해야 하는 폐쇄망이라면, 통째로 옮기기 전 tar로 묶고 용량이 크므로 분할합니다.
-
 ```bash
-export EXPORT_DIR=<전달매체 마운트 경로>/mas-9.2-offline
-mkdir -p "$EXPORT_DIR"
-
-tar -C "$HOME/mas-install" -cf - \
-  licenses redhat ocp registry mas-cli rpms nfs-provisioner mirror transfer-files.sha256 \
-  | split -b 50G - "$EXPORT_DIR/mas-offline.tar.part-"
-
-cd "$EXPORT_DIR"
-sha256sum mas-offline.tar.part-* > transfer-parts.sha256
-
-du -sh "$EXPORT_DIR"
+wc -l ~/mas-install/transfer-files.sha256      # 더 이상 안 늘면 완료
 ```
 
-**3) 실제 Bastion 서버로 반입**
+**2) tar로 묶어 전송**
 
-tar 조각들을 실제 bastion 으로 반입합니다.
+🔴 미러 산출물에는 `blobs/sha256:...` 처럼 **콜론이 들어간 파일이 4천 개 이상** 있습니다. 콜론은 NTFS/exFAT에서 파일명에 쓸 수 없어, Windows 파일시스템에 디렉터리째로 복사하면 그 파일들이 조용히 실패합니다. 경로 길이 제한(260자)도 걸립니다.
 
-**4) 반입 후 파일 압축 해제 및 파일 검증** (§3.1 진행 전에 먼저 실행)
+**그래서 tar로 묶어 조각 파일만 옮깁니다.** tar 안에서는 콜론이 문제되지 않고, 사이트 Linux에서 풀면 원래 이름이 그대로 복원됩니다 — 별도 복구 작업은 없습니다. 매체가 NTFS·exFAT·ext4 무엇이든 동일하게 동작합니다.
+
+⚠️ **외장하드에서 tar를 풀지 마세요.** Windows에서 풀면 그 순간 콜론 파일 생성에 실패합니다. tar 조각은 손대지 않고 사이트 Linux로 옮긴 뒤 거기서 풉니다.
+
+**실행 — tar로 묶어 분할** (인터넷 연결 서버, 489GB 추가 공간 필요)
+
+스테이징 디렉터리는 반드시 `~/mas-install` **바깥**에 만드세요. 안에 만들면 tar가 자기가 만드는 조각을 다시 담습니다.
 
 ```bash
-cd <전달매체 마운트 경로>/mas-9.2-offline
-sha256sum -c transfer-parts.sha256
+mkdir -p ~/mas-install-transfer
+cd "$HOME/mas-install"
+
+nohup sh -c 'tar -cf - licenses redhat ocp registry mas-cli rpms nfs-provisioner mirror transfer-files.sha256 \
+  | split -b 20G -d - ~/mas-install-transfer/mas-offline.tar.part-' > ~/mas-install-transfer/tar.log 2>&1 &
+```
+
+진행 확인 : 조각 수와 용량이 늘어야 정상. 디스크 사용률이 90% 근처까지 올라갑니다
+
+```bash
+watch -n 10 'ls ~/mas-install-transfer | wc -l; du -sh ~/mas-install-transfer; df -h /home | tail -1'
+```
+
+검증 : 조각 약 25개, 합계 **489GB**. `tar.log`가 비어 있어야 함
+
+```bash
+ls -lh ~/mas-install-transfer
+du -sh ~/mas-install-transfer
+cat ~/mas-install-transfer/tar.log
+```
+
+**실행 — 조각 체크섬**
+
+489GB를 다시 읽으므로 이것도 수 시간 걸립니다.
+
+```bash
+cd ~/mas-install-transfer
+nohup sh -c 'sha256sum mas-offline.tar.part-* > transfer-parts.sha256' &
+```
+
+진행 확인 : 줄 수가 조각 수(25)에 도달하면 완료
+
+```bash
+watch -n 10 'wc -l ~/mas-install-transfer/transfer-parts.sha256'
+```
+
+검증 : 조각 수와 체크섬 줄 수가 같아야 함
+
+```bash
+ls ~/mas-install-transfer/mas-offline.tar.part-* | wc -l
+wc -l ~/mas-install-transfer/transfer-parts.sha256
+```
+
+**실행 — 전송**
+
+`~/mas-install-transfer`의 모든 파일(조각 + `transfer-parts.sha256`)을 FileZilla(SFTP)로 외장하드에 받고, 외장하드를 사이트 Bastion으로 옮겨 다시 SFTP로 올립니다.
+
+**실행 — 사이트 Bastion에서 복원**
+
+```bash
+cd <조각을 올린 경로>
+sha256sum -c transfer-parts.sha256                       # 조각 무결성
 
 mkdir -p ~/mas-install
 cat mas-offline.tar.part-* | tar -xf - -C ~/mas-install
-
-cd ~/mas-install
-sha256sum -c transfer-files.sha256
 ```
 
-두 checksum 검증이 모두 통과해야(`OK`) 다음 단계(§3.1)로 진행합니다. 라이선스/Pull Secret 등 보안 파일은 일반 전송 매체와 분리된 절차로 반입하는 것을 권장합니다(IBM Entitlement Key, `lincense_poc.dat`, `pull-secret.json`).
+전송이 끝나면 인터넷 연결 서버의 스테이징을 지워 489GB를 회수합니다.
 
-> 참고: 지금처럼 같은 서버에서 계속 진행하는 테스트 단계에서는 1)/2)/3)번을 생략하고 `~/mas-install`을 그대로 둔 채 §3으로 넘어가면 됩니다. 실제 사이트 서버로 옮길 때만 필요합니다.
+```bash
+rm -rf ~/mas-install-transfer
+```
+
+---
+
+**3) 확인 및 검증** — 출력이 없어야 §3.1로 진행합니다.
+
+```bash
+cd ~/mas-install
+sha256sum -c transfer-files.sha256 | grep -v ': OK$'
+du -sh ~/mas-install/*
+find ~/mas-install/mirror -name '*:*' | wc -l      # 4000 이상이어야 정상
+```
 
 ---
 
@@ -701,23 +851,23 @@ sha256sum -c transfer-files.sha256
 
 ### 계정 사용 원칙
 
-각 절 제목에 실행 계정을 표시했습니다. `maximo` 계정으로 SSH 접속한 뒤, root가 필요한 구간에서만 `sudo -i`로 전환하는 방식을 권장합니다.
+각 절 제목에 실행 계정을 표시했습니다. **사용자 계정**(이 문서의 예시는 `maximo`)으로 SSH 접속한 뒤, root가 필요한 구간에서만 `sudo -i`로 전환합니다.
 
 ```bash
 ssh maximo@192.168.2.210
 sudo -i          # root 구간(§3.1, §3.2, §3.4 CA 등록, §3.8.2 NFS 서버) 진입
-exit             # 끝나면 maximo로 복귀
+exit             # 끝나면 사용자 계정으로 복귀
 ```
 
 | 구간 | 계정 | root가 필요한 이유 |
 |---|---|---|
 | §3.1 | **root** | `/etc/yum.repos.d/`, 시스템 패키지 설치 |
 | §3.2 | **root** | `/etc/dnsmasq.d/`, `systemctl`, `firewall-cmd` |
-| §3.4 (일부) | **root** | `/var/lib/mirror-registry` 생성, `/etc/containers/certs.d/`·`/etc/pki/ca-trust/` CA 등록 |
+| §3.4 (일부) | **root** | `/etc/containers/certs.d/`·`/etc/pki/ca-trust/` CA 등록 |
 | §3.8.2 A-1 | **root** | `/etc/exports`, `nfs-server`, 방화벽 |
-| 그 외 전부 | `maximo` | `mas` CLI, Mirror Registry 설치·운영, 이미지 push, `mas install` 등 (rootless podman) |
+| 그 외 전부 | 사용자 계정 | `mas` CLI, Mirror Registry 설치·운영, 이미지 push, `mas install` 등 (rootless podman) |
 
-🔴 **주의 — `~` 경로 함정**: `sudo -i` 후에는 `$HOME`이 `/root`가 되므로 **`~/mas-install/...`이 `/root/mas-install/...`로 해석**됩니다. 그래서 이 문서의 **root 구간은 모두 절대 경로**(`/home/maximo/mas-install/...`)로 작성했고, **`maximo` 구간은 `~`** 를 씁니다. 명령을 복사할 때 현재 어느 셸에 있는지 (`whoami`로) 확인하세요.
+🔴 **주의 — `~` 경로 함정**: `sudo -i` 후에는 `$HOME`이 `/root`가 되므로 **`~/mas-install/...`이 `/root/mas-install/...`로 해석**됩니다. 그래서 이 문서의 **root 구간은 모두 절대 경로**(`/home/maximo/mas-install/...`)로 작성했고, **사용자 계정 구간은 `~`** 를 씁니다. 명령을 복사할 때 현재 어느 셸에 있는지 (`whoami`로) 확인하세요.
 
 ```bash
 whoami   # root 인지 maximo 인지 확인
@@ -725,7 +875,17 @@ whoami   # root 인지 maximo 인지 확인
 
 ### 3.1 RPM 오프라인 저장소 등록 및 도구 설치 (root 계정)
 
+§2.3의 4번에서 반입한 `rpms/`를 로컬 저장소로 등록하고 §3에 필요한 도구를 설치합니다.
+
+🔴 RHEL은 GPG 키 **파일**은 제공하지만 **RPM DB에 임포트되지 않은 경우**가 있습니다. 이 상태로 `gpgcheck=1` 저장소를 쓰면 `"you do not have any GPG public keys installed"` 로 설치가 전부 실패합니다.
+
+**1) 실행**
+
 ```bash
+# GPG 키 임포트
+rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
+
+# 저장소 등록
 cat > /etc/yum.repos.d/mas-offline.repo <<'EOF'
 [mas-offline]
 name=MAS Offline RPM Repository
@@ -735,92 +895,187 @@ gpgcheck=1
 repo_gpgcheck=0
 EOF
 
-dnf --disablerepo='*' --enablerepo=mas-offline makecache
+# 도구 설치
+dnf --disablerepo='*' --enablerepo=mas-offline clean metadata
 dnf --disablerepo='*' --enablerepo=mas-offline install -y \
   podman openssl jq rsync tar gzip dnsmasq bind-utils firewalld createrepo_c \
-  nfs-utils
+  nfs-utils nmstate chrony
 ```
 
-`--disablerepo='*'`로 외부 저장소를 전부 끊고 반입한 `mas-offline`만 사용하므로 인터넷 없이 설치됩니다. 설치 후 확인합니다.
+⚠️ `clean metadata`를 빠뜨리면 dnf가 이전 캐시를 써서 새 패키지를 `No match for argument`로 보고합니다.
+
+**2) 확인 및 검증**
 
 ```bash
+rpm -qa 'gpg-pubkey*'          # 항목이 나와야 정상
 podman --version
-dnsmasq --version | head -1
-rpm -q nfs-utils firewalld bind-utils
+rpm -q podman dnsmasq bind-utils firewalld nfs-utils nmstate chrony
+nmstatectl --version
 ```
-
-- `nfs-utils`는 §3.8.2(Bastion을 RWX용 NFS 서버로 구성)에서 사용합니다.
-- ⚠️ `gpgcheck=1`이므로 RPM 서명 검증에 Red Hat GPG 키가 필요합니다. 최소 설치 등으로 키가 없어 실패하면 `/etc/pki/rpm-gpg/`에 키가 있는지 확인하고, 없으면 인터넷 연결 서버에서 함께 반입하세요(정책상 불가피할 때만 `gpgcheck=0`으로 완화 — 권장하지 않음).
 
 ### 3.2 DNS 구성 (root 계정)
 
-✅ **공식 문서 확인** (Red Hat Agent-based Installer 사전 요구사항): SNO 설치가 완료되려면 아래 이름이 반드시 resolve되어야 합니다. **누락 시 SNO 설치 자체가 끝나지 않습니다.**
+🔴 아래 4개 이름이 resolve되지 않으면 **SNO 설치가 완료되지 않습니다** (Red Hat Agent-based Installer 요구사항).
 
-| 이름 | 값 |
-|---|---|
-| `api.<cluster-name>.<base-domain>` | SNO IP (`192.168.2.211`) |
-| `api-int.<cluster-name>.<base-domain>` | SNO IP (`192.168.2.211`, api와 동일) |
-| `*.apps.<cluster-name>.<base-domain>` | SNO IP (`192.168.2.211`) |
-| `registry.<base-domain>` | Bastion IP (`192.168.2.210`) |
+아래 값을 정하여 `mas.conf` 파일을 작성합니다.
 
-`/etc/dnsmasq.d/mas.conf`:
+`<cluster-name>`, `<base-domain>`, `<sno-ip>`, `<bastion-ip>`
+
+**1) 실행 — `mas.conf` 작성**
+
+```bash
+vi /etc/dnsmasq.d/mas.conf
+```
 
 ```ini
-server=<upstream-dns-ip>
-
-address=/api.<cluster-name>.<base-domain>/192.168.2.211
-address=/api-int.<cluster-name>.<base-domain>/192.168.2.211
-address=/.apps.<cluster-name>.<base-domain>/192.168.2.211
-address=/registry.<base-domain>/192.168.2.210
+# 상위 DNS: 사내 DNS가 있으면 server=<dns-ip> 로 추가, 없으면 넣지 않음
+server=<dns-ip>
+address=/api.<cluster-name>.<base-domain>/<sno-ip>
+address=/api-int.<cluster-name>.<base-domain>/<sno-ip>
+address=/.apps.<cluster-name>.<base-domain>/<sno-ip>
+address=/registry.<cluster-name>.<base-domain>/<bastion-ip>
 ```
 
-```bash
-systemctl enable --now dnsmasq
-systemctl enable --now firewalld
+예시)
 
-firewall-cmd --permanent --add-service=dns          # 53/tcp,udp — SNO/클라이언트 → Bastion DNS
-firewall-cmd --permanent --add-port=8443/tcp        # Mirror Registry
-firewall-cmd --permanent --add-port=6443/tcp        # OpenShift API (Bastion/관리자 → SNO)
-firewall-cmd --permanent --add-port=443/tcp         # OpenShift Router (MAS UI, Console)
-firewall-cmd --permanent --add-port=80/tcp          # HTTP redirect
+```ini
+#사내 DNS 가 없으면 주석 처리
+#server=8.8.8.8
+address=/api.mas-it.itmsg.co.kr/192.168.2.211
+address=/api-int.mas-it.itmsg.co.kr/192.168.2.211
+address=/.apps.mas-it.itmsg.co.kr/192.168.2.211
+address=/registry.mas-it.itmsg.co.kr/192.168.2.210
+```
+
+**2) 실행 — 서비스·방화벽 기동**
+
+```bash
+systemctl enable --now dnsmasq firewalld
+
+firewall-cmd --permanent --add-service=dns     # 53   DNS
+firewall-cmd --permanent --add-port=8443/tcp   # 8443 Mirror Registry
+firewall-cmd --permanent --add-port=6443/tcp   # 6443 OpenShift API
+firewall-cmd --permanent --add-port=443/tcp    # 443  Router (MAS UI, Console)
+firewall-cmd --permanent --add-port=80/tcp     # 80   HTTP redirect
 firewall-cmd --reload
-firewall-cmd --list-all
 
-nslookup api.<cluster-name>.<base-domain>
-nslookup api-int.<cluster-name>.<base-domain>
-nslookup test.apps.<cluster-name>.<base-domain>
-nslookup registry.<base-domain>
+firewall-cmd --list-all  # 적용 확인
+
 ```
 
-> 위 포트는 이 Bastion 자체 방화벽 기준입니다. 6443/443/80은 SNO 노드로 향하는 트래픽이므로 SNO 쪽(및 중간 네트워크 장비)에서도 허용되어야 하며, SNO 내부 통신용 `22623/tcp`(Machine Config Server)는 노드 자체에서 처리합니다. 실제 정책은 사이트 방화벽 규정과 Red Hat OCP 4.20 네트워크 요구사항을 함께 적용하세요.
+**3) 실행 — Bastion 자신이 dnsmasq를 쓰도록 설정**
 
-4개 모두 정상 응답(위 표의 IP)해야 다음 단계로 진행합니다. SNO 노드와 클라이언트가 이 Bastion을 DNS 상위 서버로 사용하도록 네트워크 설정(DHCP 또는 고정 DNS)도 함께 확인합니다.
+빼먹으면 §3.5 push와 §3.7 `oc login`이 실패합니다.
 
-**추가 확인 — 정방향 외 레코드**
-
-사이트 환경에 따라 아래도 필요할 수 있습니다. Red Hat 베어메탈/UPI 설치 요구사항에서 역방향(PTR) 레코드를 권장하므로, 사이트 DNS 정책에 맞춰 확인하세요.
-
-| 항목 | 확인 내용 |
-|---|---|
-| SNO 호스트명 | `<sno-hostname>.<cluster-name>.<base-domain>` → `192.168.2.211` |
-| PTR(역방향) | `192.168.2.211` → SNO 호스트명, `192.168.2.210` → Bastion |
+먼저 연결 이름을 확인합니다.
 
 ```bash
-nslookup 192.168.2.211
-nslookup 192.168.2.210
+nmcli -t -f NAME,DEVICE connection show --active
 ```
 
-⚠️ **미검증**: SNO 단일 노드 구성에서 PTR 레코드가 필수인지 권장인지는 사이트 환경/설치 방식에 따라 다릅니다. 최소한 정방향 4건은 반드시 동작해야 하며, PTR은 준비해두는 편이 안전합니다.
+형식)
+
+```bash
+CONN=<연결 이름>
+
+# 127.0.0.1이 먼저여야 dnsmasq가 클러스터 이름을 먼저 응답합니다
+# 사내 DNS가 없으면 <dns-ip>를 빼고 "127.0.0.1" 만
+nmcli connection modify "$CONN" ipv4.dns "127.0.0.1 <dns-ip>"
+nmcli connection modify "$CONN" ipv4.ignore-auto-dns yes
+nmcli connection up "$CONN"
+
+systemctl restart dnsmasq
+```
+
+예시)
+
+```bash
+CONN=ens192
+
+# 사내 DNS 없음
+nmcli connection modify "$CONN" ipv4.dns "127.0.0.1"
+nmcli connection modify "$CONN" ipv4.ignore-auto-dns yes
+nmcli connection up "$CONN"
+
+systemctl restart dnsmasq
+```
+
+⚠️ `nmcli connection up`이 네트워크를 잠시 끊습니다. `ipv4.dns`만 바꾸므로 IP는 유지되지만, SSH가 재연결될 수 있습니다.
+
+**4) 확인 및 검증**
+
+검증 : 4개 모두 지정한 IP로 응답해야 함
+
+```bash
+cat /etc/resolv.conf                    # nameserver 127.0.0.1
+nslookup api.mas-it.itmsg.co.kr         # → 192.168.2.211
+nslookup api-int.mas-it.itmsg.co.kr     # → 192.168.2.211
+nslookup test.apps.mas-it.itmsg.co.kr   # → 192.168.2.211
+nslookup registry.mas-it.itmsg.co.kr    # → 192.168.2.210
+```
+
+검증 : 외부 이름은 **실패해야** 정상입니다 (폐쇄망)
+
+```bash
+nslookup quay.io
+```
+
+> dnsmasq 로그에 `ignoring nameserver 127.0.0.1 - local interface`가 뜨는 것은 정상입니다 — 자기 자신을 상위 DNS로 참조하지 않는다는 뜻입니다.
+
+<details>
+<summary>참고 — 상위 DNS 제거 / PTR / 방화벽 범위 / 클라이언트</summary>
+
+사내 DNS가 없다면 `server=` 줄을 주석 처리합니다.
+
+```bash
+sed -i 's/^server=/#server=/' /etc/dnsmasq.d/mas.conf
+nmcli connection modify "$CONN" ipv4.dns "127.0.0.1"
+nmcli connection up "$CONN"
+systemctl restart dnsmasq
+nslookup api.mas-it.itmsg.co.kr        # 여전히 응답해야 함
+```
+
+- **PTR** — SNO에서 필수인지 권장인지 ⚠️ 미검증. `mas-it-sno.mas-it.itmsg.co.kr` → `192.168.2.211`, 역방향 2건(SNO/Bastion)을 준비해두는 편이 안전합니다.
+- **방화벽 범위** — 위 포트는 Bastion 기준입니다. 6443/443/80은 SNO로 향하므로 중간 네트워크 장비에서도 허용되어야 합니다.
+- **클라이언트** — MAS UI에 접근할 PC도 이 Bastion을 DNS로 지정하거나 `hosts`에 등록해야 합니다.
+- ⚠️ `itmsg.co.kr`처럼 실제 공인 도메인을 쓰는 경우, 공인 DNS에 같은 이름을 만들지 마세요.
+
+</details>
 
 #### 3.2.1 NTP 구성 (root 계정)
 
-🔴 **필수**: 시간 동기가 어긋나면 인증서 검증 실패, etcd 이상, Operator 오류 등으로 이어집니다. 폐쇄망에서는 외부 NTP에 접근할 수 없으므로 **Bastion을 내부 NTP 서버로** 구성합니다.
+🔴 시간 동기가 어긋나면 인증서 검증 실패, etcd 이상, Operator 오류로 이어집니다. 폐쇄망에서는 외부 NTP에 접근할 수 없으므로 **Bastion을 내부 NTP 서버로** 구성합니다.
+
+**1) 실행 — 시간 보정**
+
+🔴 `local stratum 10`은 **이 서버 시계를 정답으로 삼는다**는 뜻입니다. 시간이 틀어진 상태로 구성하면 SNO 전체가 틀린 시간을 받아 인증서 검증이 깨집니다. **먼저 시간을 맞추세요.**
 
 ```bash
-rpm -q chrony || dnf --disablerepo='*' --enablerepo=mas-offline install -y chrony
+timedatectl                                    # 현재 시간·시간대 확인
+timedatectl set-timezone Asia/Seoul            # 필요 시
 ```
 
-`/etc/chrony.conf`에 내부 네트워크 대상 서비스를 허용합니다.
+형식)
+
+```bash
+timedatectl set-time '<YYYY-MM-DD HH:MM:SS>'
+```
+
+예시)
+
+```bash
+timedatectl set-time '2026-08-05 17:16:00'
+```
+
+⚠️ `chronyd`가 실행 중이면 `set-time`이 거부됩니다. 그 경우 잠시 멈추고 맞춘 뒤 다시 시작하세요.
+
+```bash
+systemctl stop chronyd
+timedatectl set-time '2026-08-05 17:16:00'
+hwclock --systohc                              # BIOS 시계에도 반영
+```
+
+**2) 실행 — chrony 구성**
 
 ```bash
 cat >> /etc/chrony.conf <<'EOF'
@@ -836,235 +1091,307 @@ systemctl restart chronyd
 
 firewall-cmd --permanent --add-service=ntp     # 123/udp
 firewall-cmd --reload
-
-chronyc tracking
-chronyc clients
-timedatectl status
 ```
 
-> 사이트에 상위 NTP 서버가 있으면 `local stratum 10` 대신 `server <upstream-ntp-ip> iburst`를 넣는 것이 정확합니다. `local stratum 10`은 상위 시간원이 전혀 없는 완전 폐쇄망용 대안입니다.
+> 사이트에 상위 NTP가 있으면 `local stratum 10` 대신 `server <upstream-ntp-ip> iburst`를 씁니다. 그러면 시간 보정도 자동으로 됩니다.
+> SNO에는 §3.6 `agent-config.yaml`의 `additionalNTPSources`로 Bastion IP를 전달합니다.
 
-**SNO 노드에 이 NTP를 알려주는 방법**: §3.6의 `agent-config.yaml`에 `additionalNTPSources`로 Bastion IP를 지정합니다(해당 절 참고). DHCP로 NTP를 배포하는 환경이면 DHCP 옵션으로도 가능합니다.
+**3) 확인 및 검증**
 
-### 3.3 MAS CLI 이미지 불러오기 (`maximo` 계정)
+검증 : `Stratum 10`, `Reference ID 7F7F0101`(=127.127.1.1)이면 로컬 클럭 기준으로 서비스 중
 
-사이트 Bastion은 인터넷이 없어 `quay.io`에서 `quay.io/ibmmas/cli:23.4.1`을 직접 pull할 수 없습니다. 인터넷 연결 서버에서 미리 저장해 온 tar 파일을 불러옵니다.
+```bash
+chronyc tracking
+```
+
+검증 : `0.0.0.0:123`으로 대기해야 SNO가 질의할 수 있음
+
+```bash
+ss -ulnp | grep 123
+```
+
+검증 : 시간이 실제 시각과 맞아야 함
+
+```bash
+timedatectl
+```
+
+> `System clock synchronized: no`는 정상입니다 — 상위 NTP 없이 자기 클럭을 기준으로 쓸 때 chrony는 "동기화됨"으로 보고하지 않습니다. SNO에 시간을 제공하는 기능은 정상 동작합니다.
+>
+> `chronyc clients`는 SNO 설치 후에야 항목이 나옵니다.
+
+### 3.3 MAS CLI 이미지 불러오기 (사용자 계정)
+
+인터넷 연결 서버에서 저장해 온 tar를 불러옵니다(§2.3의 6번).
+
+**1) 실행**
 
 ```bash
 podman load -i ~/mas-install/mas-cli/mas-cli-23.4.1.tar
-podman image exists quay.io/ibmmas/cli:23.4.1
 ```
 
-### 3.4 Mirror Registry 설치 (`maximo` 계정)
-
-먼저 Registry 데이터 저장 디렉터리를 **root 계정**으로 만들고 `maximo`에게 소유권을 줍니다. `/var/lib/mirror-registry`에는 별도의 대용량 디스크를 마운트한 상태여야 합니다(§2.1 참고 — 최소 1TB 권장).
+**2) 확인 및 검증**
 
 ```bash
-install -d -m 0750 -o maximo -g maximo /home/maximo/quay-install
-install -d -m 0750 -o maximo -g maximo /var/lib/mirror-registry
-install -d -m 0750 -o maximo -g maximo /var/lib/mirror-registry/quay
-install -d -m 0750 -o maximo -g maximo /var/lib/mirror-registry/sqlite
-
-findmnt -T /var/lib/mirror-registry
-df -hT /var/lib/mirror-registry
+podman image exists quay.io/ibmmas/cli:23.4.1 && echo OK
+podman run --rm -t quay.io/ibmmas/cli:23.4.1 mas mirror-images --help | head -10
 ```
 
-이제 `maximo` 계정으로 설치합니다.
+첫 줄에 `IBM Maximo Application Suite Air Gap Image Mirror (v23.4.1)` 이 나오면 정상입니다.
+
+> - `mas --version`·`mas --help`는 없는 파라미터입니다(`unknown parameter`). `--help`는 서브커맨드에만 있습니다.
+> - `-t`가 없으면 `tput: No value for $TERM` 경고가 나옵니다.
+> - 끝에 `write /dev/stdout: broken pipe`가 뜨는 것은 `head`가 파이프를 먼저 닫아서이며 무해합니다.
+
+### 3.4 Mirror Registry 설치 (사용자 계정)
+
+Bastion은 같은 이미지를 **두 벌 보관**합니다.
+
+| | 정체 | 위치 | 용량 |
+|---|---|---|---|
+| 미러 파일 | §2.5에서 반입한 원본 | `~/mas-install/mirror/` | 489GB |
+| Registry 사본 | §3.5 push 때 Quay가 생성 | `~/mirror-registry/quay` | 약 489GB |
+
+> 빈 디스크가 있으면 `~/mirror-registry`에 마운트하세요. §3.5 push 때 읽기(미러 파일)와 쓰기(Registry)가 다른 디스크로 분산되어 빨라집니다. 없으면 그냥 진행하면 됩니다 — 루트 파일시스템에 약 489GB 여유만 있으면 동작합니다.
+
+**1) 실행 — 디렉터리 준비**
+
+```bash
+mkdir -p ~/quay-install ~/mirror-registry/{quay,sqlite}
+chmod 750 ~/quay-install ~/mirror-registry
+```
+
+**2) 실행 — Registry 설치**
+
+압축을 풀면 `image-archive.tar`(Quay·Redis·sqlite 이미지)가 함께 나옵니다 — 폐쇄망에서 추가로 받을 것이 없습니다.
 
 ```bash
 mkdir -p ~/mas-install/registry/bin
 tar -xzf ~/mas-install/registry/mirror-registry-amd64.tar.gz -C ~/mas-install/registry/bin
-
 cd ~/mas-install/registry/bin
-./mirror-registry install -v \
-  --quayHostname registry.<base-domain> \
-  --quayRoot /home/maximo/quay-install \
-  --quayStorage /var/lib/mirror-registry/quay \
-  --sqliteStorage /var/lib/mirror-registry/sqlite
+ls -la                # image-archive.tar, execution-environment.tar, sqlite3.tar, mirror-registry
 ```
 
-⚠️ `--quayStorage`/`--sqliteStorage` 플래그명은 mirror-registry 버전에 따라 다를 수 있습니다(구버전은 PostgreSQL 기반으로 `--pgStorage` 사용). 실행 전 `./mirror-registry install --help`로 확인하세요.
-
-설치 결과로 나오는 초기 사용자명/비밀번호는 보안 저장소에만 보관합니다.
-
-⚠️ **지원 범위 주의 (Red Hat 공식)**: `mirror registry for Red Hat OpenShift`는 **OCP 설치용 미러링을 위한 소규모·비HA·로컬 저장소 기반 Registry**입니다. OCP와 MAS 전체 이미지를 담는 **장기 운영 Registry로 쓰는 것은 지원 범위를 벗어납니다.** 현재 구성은 **PoC/검증 용도**로 보고, 운영 전환 시에는 Red Hat Quay나 사내 표준 Registry(Harbor/Artifactory 등) 등 운영급 Registry를 검토하세요.
-
-또한 **이후 §3.6의 Pull Secret 준비를 위해 읽기 전용(pull-only) 계정을 지금 함께 만들어 두세요** — Quay 웹 UI(`https://registry.<base-domain>:8443`)에서 별도 사용자를 만들고 해당 조직/리포지토리에 읽기 권한만 부여합니다.
-
-Bastion 자체에도 이 Registry의 CA를 신뢰하도록 등록합니다 (아래는 **root 계정**에서 실행 — 시스템 전역 인증서 저장소를 건드리므로).
+형식)
 
 ```bash
+./mirror-registry install -v \
+  --targetHostname <bastion-ip> \
+  --quayHostname   registry.<cluster-name>.<base-domain>:8443 \
+  --quayRoot       "$HOME/quay-install" \
+  --quayStorage    "$HOME/mirror-registry/quay" \
+  --sqliteStorage  "$HOME/mirror-registry/sqlite"
+```
+
+예시)
+
+```bash
+./mirror-registry install -v \
+  --targetHostname 192.168.2.210 \
+  --quayHostname   registry.mas-it.itmsg.co.kr:8443 \
+  --quayRoot       "$HOME/quay-install" \
+  --quayStorage    "$HOME/mirror-registry/quay" \
+  --sqliteStorage  "$HOME/mirror-registry/sqlite"
+```
+
+| 옵션 | 이유 |
+|---|---|
+| `--targetHostname` | 기본값이 `$HOST`(호스트명)인데 IPv6 링크로컬로 해석되면 SSH가 실패합니다. IP를 명시합니다 |
+| `--quayHostname` **`:8443`** | 기본값 형태가 `<host>:8443`입니다. 포트가 빠지면 Quay가 생성하는 URL에 포트가 없어 리다이렉트가 깨질 수 있습니다 |
+| `--quayStorage`·`--sqliteStorage` | 지정하지 않으면 podman named volume(`quay-storage`, `sqlite-storage`)에 저장돼 **별도 디스크로 분리할 수 없습니다** |
+
+5~15분 걸립니다. `image-archive.tar`에서 이미지를 로드하는 시간이 대부분입니다.
+
+🔴 마지막에 출력되는 **초기 사용자명·비밀번호를 반드시 기록하세요.** 다시 볼 수 없고 §3.5 push와 §3.7.2에서 씁니다.
+
+```
+Quay is available at https://registry.mas-it.itmsg.co.kr:8443
+with credentials (init, <생성된 비밀번호>)
+```
+
+실패하면 되돌릴 수 있습니다.
+
+```bash
+./mirror-registry uninstall
+```
+
+🔴 **§3.6에서 쓸 읽기 전용(pull-only) 계정을 지금 만들어 두세요.** Quay 웹 UI(`https://registry.mas-it.itmsg.co.kr:8443`)에서 사용자를 추가하고 읽기 권한만 부여합니다. 이 자격증명은 모든 OCP 노드에 배포됩니다.
+
+**3) 실행 — Bastion에 Registry CA 신뢰 등록** (root 계정)
+
+podman과 시스템 전역이 이 Registry의 자체 서명 인증서를 신뢰하도록 등록합니다. 빼먹으면 §3.5 push가 TLS 오류로 실패합니다.
+
+```bash
+REGISTRY=registry.mas-it.itmsg.co.kr:8443
+
 REGISTRY_CA="$(find /home/maximo/quay-install -name rootCA.pem -type f -print -quit)"
-install -d -m 0755 /etc/containers/certs.d/registry.<base-domain>:8443
-install -m 0644 "$REGISTRY_CA" /etc/containers/certs.d/registry.<base-domain>:8443/ca.crt
-install -m 0644 "$REGISTRY_CA" /etc/pki/ca-trust/source/anchors/registry.<base-domain>.crt
+install -d -m 0755 "/etc/containers/certs.d/$REGISTRY"
+install -m 0644 "$REGISTRY_CA" "/etc/containers/certs.d/$REGISTRY/ca.crt"
+install -m 0644 "$REGISTRY_CA" "/etc/pki/ca-trust/source/anchors/${REGISTRY%:*}.crt"
 update-ca-trust
 ```
 
-### 3.5 Registry로 이미지 Push (from-filesystem) (`maximo` 계정)
+**4) 확인 및 검증**
 
-✅ **검증(2026-07-30, GitHub 원본 `docs/guides/image-mirroring.md` 확인)**: `from-filesystem` 모드에도 `-c`(catalog)/`-C`(channel)가 `to-filesystem`과 동일하게 필요합니다. 단 `--release`/`--min-version`/`--max-version`은 `to-filesystem` 전용이라 여기선 안 씁니다.
-
-🔴 **실행 전 필수 확인 — manifest 목적지 주소**: `to-filesystem` 단계에서 Registry 주소로 더미값을 썼다면(§2.3의 9번 참고), `manifests/from-filesystem/` manifest에 그 더미값이 남아 있을 수 있습니다. 이 manifest는 매 실행 시 재생성되지만, **첫 Stage를 실행한 직후 반드시 실제 Registry 주소로 바뀌었는지 확인**하세요.
+검증 : Quay 컨테이너가 떠 있어야 함
 
 ```bash
-# 첫 Stage(core) 실행 후 확인 — 실제 Registry 주소가 보여야 하고 localhost가 없어야 함
-head -3 ~/mas-install/mirror/core/manifests/from-filesystem/ibm-mas_9.2.0.txt
-grep -c localhost ~/mas-install/mirror/core/manifests/from-filesystem/ibm-mas_9.2.0.txt   # 0 이어야 정상
+podman ps
 ```
 
-`localhost`가 그대로 남아 있으면 **push 목적지가 잘못되므로 즉시 중단**하고, 해당 manifest가 왜 재생성되지 않았는지(캐시/권한) 확인해야 합니다.
+검증 : `401` 이 나오면 Registry가 응답하고 인증을 요구하는 정상 상태
 
 ```bash
-export REGISTRY_HOST=registry.<base-domain>
+curl -s -o /dev/null -w '%{http_code}\n' "https://registry.mas-it.itmsg.co.kr:8443/v2/"
+```
+
+> ⚠️ `mirror registry for Red Hat OpenShift`는 Red Hat 공식적으로 **OCP 설치용 소규모·비HA Registry**입니다. MAS 전체 이미지를 담는 장기 운영 Registry는 지원 범위 밖이므로, 운영 전환 시 Quay/Harbor 등을 검토하세요.
+
+### 3.5 Registry로 이미지 Push (from-filesystem) (사용자 계정)
+
+반입한 미러 데이터를 Mirror Registry로 올립니다. `from-filesystem`에는 `-c`/`-C`가 필요하고, `--release` 계열은 `to-filesystem` 전용이라 쓰지 않습니다.
+
+**1) 실행 — 환경변수**
+
+```bash
+export REGISTRY_HOST=registry.mas-it.itmsg.co.kr
 export REGISTRY_PORT=8443
-export REGISTRY_USERNAME=<registry-user>
+export REGISTRY_USERNAME=masadmin
 export LOCAL_DIR="$HOME/mas-install/mirror"
 read -s REGISTRY_PASSWORD
 export REGISTRY_PASSWORD
 ```
 
-**Red Hat 콘텐츠**
+**2) 실행 — tar 파일명 변경**
+
+🔴 래퍼가 `mirror_seq1_000000.tar` 를 하드코딩하고 있는데 oc-mirror는 `mirror_000001.tar` 로 만듭니다(§4.5). 이름을 맞춰야 합니다.
+
+⚠️ **§2.5의 체크섬 검증을 먼저 끝내세요.** 이름을 바꾸면 `transfer-files.sha256`과 어긋나 검증에서 걸립니다.
 
 ```bash
-podman run --rm \
-  -v "$LOCAL_DIR":/mnt/workspace:z \
+cd ~/mas-install/mirror/redhat
+mv mirror_000001.tar mirror_seq1_000000.tar
+ls -lh mirror_seq1_000000.tar
+```
+
+**3) 실행 — Red Hat 콘텐츠 push**
+
+```bash
+podman run --rm -v "$LOCAL_DIR":/mnt/workspace:z \
   quay.io/ibmmas/cli:23.4.1 mas mirror-redhat-images \
-  --mode from-filesystem \
-  --dir /mnt/workspace/redhat \
+  --mode from-filesystem --dir /mnt/workspace/redhat \
   -H "$REGISTRY_HOST" -P "$REGISTRY_PORT" \
   -u "$REGISTRY_USERNAME" -p "$REGISTRY_PASSWORD" \
   --no-confirm
 ```
 
-> `from-filesystem` 모드는 대상 Registry로 push하는 단계이므로 `--pullsecret`(외부 Red Hat Registry 인증)이 필요하지 않습니다 — 공식 문서 예시에도 없습니다.
+> 래퍼가 내부적으로 실행하는 명령입니다 — 실패 시 직접 실행할 때 참고하세요.
+>
+> ```
+> DOCKER_CONFIG=<dir> oc mirror --remove-signatures -c <dir>/imageset-ocp4.20.yml \
+>   --dest-tls-verify=false --parallel-images=1 \
+>   --from file://<dir>/mirror_seq1_000000.tar docker://<registry> --v2
+> ```
 
-**MAS 콘텐츠 — Stage 1: Core + Catalog**
+**4) 실행 — MAS 콘텐츠 push**
+
+`STAGE`와 `FLAGS`만 바꿔 **4회 반복**합니다.
+
+| 순서 | `STAGE` | `FLAGS` |
+|---|---|---|
+| 1 | `core` | `--mirror-catalog --mirror-core` |
+| 2 | `apps` | `--mirror-manage --mirror-icd` |
+| 3 | `other` | `--mirror-mongo --mirror-tsm --mirror-sls --mirror-cfs --mirror-db2` |
+| 4 | `cli` | `--mirror-cli` |
 
 ```bash
-podman run --rm \
-  -v "$LOCAL_DIR":/mnt/registry:z \
+STAGE=core                                    # ← 표에서 골라 교체
+FLAGS="--mirror-catalog --mirror-core"        # ← 표에서 골라 교체
+
+podman run --rm -v "$LOCAL_DIR":/mnt/registry:z \
   quay.io/ibmmas/cli:23.4.1 mas mirror-images \
-  -m from-filesystem -d /mnt/registry/core \
+  -m from-filesystem -d /mnt/registry/$STAGE \
   -H "$REGISTRY_HOST" -P "$REGISTRY_PORT" \
   -u "$REGISTRY_USERNAME" -p "$REGISTRY_PASSWORD" \
   -c v9-260625-amd64 -C 9.2.x \
-  --mirror-catalog --mirror-core \
-  --no-confirm
+  $FLAGS --no-confirm
 ```
 
-**MAS 콘텐츠 — Stage 2: Manage + Maximo IT**
+**5) 확인 및 검증**
+
+🔴 **첫 Stage(core) 직후 반드시 확인** — manifest 목적지가 실제 Registry로 재생성됐는지. `0`이 아니면 즉시 중단하세요.
 
 ```bash
-podman run --rm \
-  -v "$LOCAL_DIR":/mnt/registry:z \
-  quay.io/ibmmas/cli:23.4.1 mas mirror-images \
-  -m from-filesystem -d /mnt/registry/apps \
-  -H "$REGISTRY_HOST" -P "$REGISTRY_PORT" \
-  -u "$REGISTRY_USERNAME" -p "$REGISTRY_PASSWORD" \
-  -c v9-260625-amd64 -C 9.2.x \
-  --mirror-manage --mirror-icd \
-  --no-confirm
+grep -c localhost ~/mas-install/mirror/core/manifests/from-filesystem/ibm-mas_9.2.0.txt
 ```
 
-**MAS 콘텐츠 — Stage 4: 공통 의존성 + 내부 Db2**
-
 ```bash
-podman run --rm \
-  -v "$LOCAL_DIR":/mnt/registry:z \
-  quay.io/ibmmas/cli:23.4.1 mas mirror-images \
-  -m from-filesystem -d /mnt/registry/other \
-  -H "$REGISTRY_HOST" -P "$REGISTRY_PORT" \
-  -u "$REGISTRY_USERNAME" -p "$REGISTRY_PASSWORD" \
-  -c v9-260625-amd64 -C 9.2.x \
-  --mirror-mongo --mirror-tsm --mirror-sls --mirror-cfs --mirror-db2 \
-  --no-confirm
-```
-
-**MAS 콘텐츠 — Stage 5: CLI 자체 이미지**
-
-```bash
-podman run --rm \
-  -v "$LOCAL_DIR":/mnt/registry:z \
-  quay.io/ibmmas/cli:23.4.1 mas mirror-images \
-  -m from-filesystem -d /mnt/registry/cli \
-  -H "$REGISTRY_HOST" -P "$REGISTRY_PORT" \
-  -u "$REGISTRY_USERNAME" -p "$REGISTRY_PASSWORD" \
-  -c v9-260625-amd64 -C 9.2.x \
-  --mirror-cli \
-  --no-confirm
-
+curl -sk -u "$REGISTRY_USERNAME" https://$REGISTRY_HOST:$REGISTRY_PORT/v2/_catalog | head
 unset REGISTRY_PASSWORD
 ```
 
-### 3.6 OCP SNO 클러스터 설치 (`maximo` 계정)
+### 3.6 OCP SNO 클러스터 설치 (사용자 계정)
 
-`oc`/`kubectl`/`openshift-install`을 이 서버의 PATH에 준비합니다 (§2.3의 5번에서 받아둔 파일 사용).
+Agent-based Installer로 SNO를 설치합니다.
+
+**1) 실행 — CLI 도구 준비**
 
 ```bash
 mkdir -p ~/.local/bin
-
-tar -xzf ~/mas-install/ocp/openshift-client-linux.tar.gz -C ~/mas-install/ocp
-install -m 0755 ~/mas-install/ocp/oc ~/mas-install/ocp/kubectl ~/.local/bin/
-
+tar -xzf ~/mas-install/ocp/openshift-client-linux.tar.gz  -C ~/mas-install/ocp
 tar -xzf ~/mas-install/ocp/openshift-install-linux.tar.gz -C ~/mas-install/ocp
-install -m 0755 ~/mas-install/ocp/openshift-install ~/.local/bin/
+install -m 0755 ~/mas-install/ocp/{oc,kubectl,openshift-install} ~/.local/bin/
 
+# §3.7 이후에도 새 셸에서 그대로 쓰이도록 영구 등록
+cat >> ~/.bashrc <<'EOF'
 export PATH="$HOME/.local/bin:$PATH"
-oc version --client
-openshift-install version
+export KUBECONFIG="$HOME/ocp-sno/auth/kubeconfig"
+EOF
+source ~/.bashrc
+
+oc version --client && openshift-install version
 ```
+
+**2) 실행 — 설정 파일에 넣을 값 3개 수집**
+
+Pull Secret 병합 — 🔴 이 값은 **모든 OCP 노드에 배포**되므로 반드시 **읽기 전용 계정**을 쓰세요(§3.4에서 생성).
 
 ```bash
 mkdir -p ~/ocp-sno && cd ~/ocp-sno
-```
-
-**Pull Secret 준비 — Red Hat + Mirror Registry 병합**
-
-🔴 **필수**: `install-config.yaml`의 `pullSecret`에는 **Red Hat Pull Secret과 폐쇄망 Registry 인증정보를 병합한 JSON**이 필요합니다. 이 값은 **모든 OCP 노드에 배포**되므로 아래 두 가지를 지켜야 합니다.
-
-- ⚠️ **Registry에는 읽기 전용(pull-only) 계정을 사용하세요.** 이미지 Push용 쓰기 계정을 넣으면 모든 노드에 Registry 쓰기 권한이 배포됩니다.
-- 폐쇄망이라 `registry.redhat.io` 등 외부 항목은 실제로 사용되지 않지만, Installer 검증을 위해 형식상 남겨둡니다.
-
-```bash
-# Mirror Registry에 읽기 전용 계정을 먼저 생성해 두세요 (Quay 웹 UI 또는 API)
 read -s PULL_ONLY_PASSWORD
 
-cp ~/mas-install/redhat/pull-secret.json ~/ocp-sno/pull-secret-merged.json
+cp ~/mas-install/redhat/pull-secret.json ./pull-secret-merged.json
 
 printf '%s' "$PULL_ONLY_PASSWORD" | podman login \
-  registry.<base-domain>:8443 \
-  --username <registry-pull-only-user> \
-  --password-stdin \
-  --authfile ~/ocp-sno/pull-secret-merged.json
+  registry.mas-it.itmsg.co.kr:8443 \
+  --username maspull --password-stdin \
+  --authfile ./pull-secret-merged.json
 
 unset PULL_ONLY_PASSWORD
-chmod 600 ~/ocp-sno/pull-secret-merged.json
+chmod 600 ./pull-secret-merged.json
 
-# 병합 확인 — registry.<base-domain>:8443 항목이 추가되어야 함
-jq -r '.auths | keys[]' ~/ocp-sno/pull-secret-merged.json
+jq -c . ./pull-secret-merged.json          # ← pullSecret 값
 ```
 
-원본 `~/mas-install/redhat/pull-secret.json`은 수정하지 않습니다. 이렇게 만든 `pull-secret-merged.json`의 **전체 내용을 한 줄로** `install-config.yaml`의 `pullSecret` 값에 넣습니다.
+Registry CA — `additionalTrustBundle` 값:
 
 ```bash
-jq -c . ~/ocp-sno/pull-secret-merged.json
-```
-
-**CA 인증서 준비** — `additionalTrustBundle`에 넣을 Mirror Registry의 root CA입니다.
-
-```bash
-find /home/maximo/quay-install -name rootCA.pem -type f
 cat "$(find /home/maximo/quay-install -name rootCA.pem -type f -print -quit)"
 ```
 
-`install-config.yaml` (플레이스홀더는 실제 값으로 교체):
+IDMS — `imageDigestSources`의 source/mirror 쌍. `spec.imageDigestMirrors` 항목을 옮겨 적습니다(구조 거의 동일).
+
+```bash
+cat ~/mas-install/mirror/redhat/working-dir/cluster-resources/idms-oc-mirror.yaml
+```
+
+**3) 실행 — `install-config.yaml` 작성**
 
 ```yaml
 apiVersion: v1
-baseDomain: <base-domain>
+baseDomain: itmsg.co.kr
 metadata:
-  name: <cluster-name>
+  name: mas-it
 compute:
   - name: worker
     replicas: 0
@@ -1082,54 +1409,40 @@ networking:
     - 172.30.0.0/16
 platform:
   none: {}
-pullSecret: '<mirror-registry-authfile-json>'
+pullSecret: '<2)의 jq -c 출력>'
 sshKey: '<ssh-public-key>'
 additionalTrustBundle: |
-  <mirror-registry-root-ca-pem>
+  <2)의 rootCA.pem 내용>
 imageDigestSources:
-  - source: <mirror-redhat-images 미러링 로그의 source>
+  - source: <2)에서 확인한 source>
     mirrors:
-      - <mirror-redhat-images 미러링 로그의 mirror>
+      - <2)에서 확인한 mirror>
 ```
 
-⚠️ **미검증 — 필드명(`imageDigestSources` vs `imageContentSources`)**: 최신 OCP Installer 타입에는 `imageDigestSources`가 존재하지만, **Red Hat Agent-based Installer 공식 예제는 여전히 `imageContentSources`를 사용**하는 곳이 있어 문서 간 표기가 엇갈립니다. **OCP 4.20.30 실제 Installer로 검증 전에는 확정하지 마세요.**
+⚠️ **`imageDigestSources` vs `imageContentSources`** — 문서마다 표기가 엇갈립니다. 적용 전 확인하세요.
 
 ```bash
-# 실제 Installer가 인식하는 필드 확인 — 잘못된 필드는 경고/오류로 걸러짐
 openshift-install explain installconfig | grep -iE 'imageDigestSources|imageContentSources'
 ```
 
-인식되지 않으면 다른 쪽 필드명으로 바꿔서 다시 시도하세요.
-
-> 개념 정리: `imageDigestSources`/`imageContentSources`는 **부트스트랩 단계**(클러스터가 아직 없을 때) 이미지 리다이렉션용이고, `ImageDigestMirrorSet`(IDMS)는 **클러스터 생성 후** 적용하는 리소스입니다(§3.7.1의 `oc apply`, §3.7.2의 `mas configure-airgap`). 둘 다 필요하며 서로를 대체하지 않습니다.
-
-다만 `imageDigestSources`에 넣을 정확한 source/mirror 쌍의 파일 위치는 완전히 확정하지 못했습니다. oc-mirror v2가 생성하는 클러스터 리소스는 보통 `working-dir/cluster-resources/`(예: `idms-oc-mirror.yaml`) 아래에 있습니다. **첫 실행 시 아래로 실제 위치를 확인**하세요.
-
-```bash
-find ~/mas-install/mirror/redhat/working-dir -iname "*idms*" -o -iname "*cluster-resources*"
-cat ~/mas-install/mirror/redhat/working-dir/cluster-resources/idms-oc-mirror.yaml 2>/dev/null
-```
-
-찾은 IDMS yaml의 `spec.imageDigestMirrors` 목록(각 `source`/`mirrors`)을 install-config.yaml의 `imageDigestSources`에 그대로 옮겨 적습니다(필드 구조가 거의 동일).
-
-`agent-config.yaml`:
+**4) 실행 — `agent-config.yaml` 작성**
 
 ```yaml
 apiVersion: v1beta1
 kind: AgentConfig
 metadata:
-  name: <cluster-name>
+  name: mas-it
 rendezvousIP: 192.168.2.211
 additionalNTPSources:
-  - 192.168.2.210          # §3.2.1에서 구성한 Bastion NTP
+  - 192.168.2.210
 hosts:
-  - hostname: <sno-hostname>
+  - hostname: mas-it-sno
     role: master
     interfaces:
-      - name: <nic-name>
+      - name: <nic-name>             # SNO 부팅 후 확인
         macAddress: "00:50:56:bb:86:df"
     rootDeviceHints:
-      deviceName: /dev/<os-disk>
+      deviceName: /dev/<os-disk>     # 🔴 300GB(OS) 디스크 — 500GB는 LVMS용으로 비워둘 것
     networkConfig:
       interfaces:
         - name: <nic-name>
@@ -1139,12 +1452,12 @@ hosts:
             enabled: true
             address:
               - ip: 192.168.2.211
-                prefix-length: 22
+                prefix-length: 22    # /22
             dhcp: false
       dns-resolver:
         config:
           server:
-            - 192.168.2.210
+            - 192.168.2.210           # Bastion dnsmasq
       routes:
         config:
           - destination: 0.0.0.0/0
@@ -1152,83 +1465,95 @@ hosts:
             next-hop-interface: <nic-name>
 ```
 
-⚠️ **중요**: `openshift-install`은 실행 시 `install-config.yaml`과 `agent-config.yaml`을 **소비(consume)하며 원본을 삭제**합니다. 재시도할 때 처음부터 다시 작성하지 않도록 반드시 사본을 먼저 백업하세요.
+🔴 **디스크 지정 주의**: SNO는 디스크가 2개(300GB/500GB)입니다. `rootDeviceHints`에 **OS용 300GB만** 지정해 500GB를 빈 상태로 남겨야 §3.8.1의 LVMS가 동작합니다. **잘못 지정하면 §3.9에서 막히고 SNO 재설치가 필요합니다.**
+
+**5) 실행 — ISO 생성 및 설치**
+
+⚠️ `openshift-install`은 두 yaml을 **소비하며 삭제**하므로 반드시 백업 후 실행하세요.
 
 ```bash
-mkdir -p ~/ocp-sno-backup
-cp install-config.yaml agent-config.yaml ~/ocp-sno-backup/
-```
+mkdir -p ~/ocp-sno-backup && cp install-config.yaml agent-config.yaml ~/ocp-sno-backup/
 
-```bash
 openshift-install agent create image --dir .
-# agent.x86_64.iso를 SNO 노드에 연결·부팅
+# → agent.x86_64.iso 를 SNO에 연결·부팅
 
 openshift-install agent wait-for bootstrap-complete --dir . --log-level=info
-openshift-install agent wait-for install-complete --dir . --log-level=info
-
-export KUBECONFIG="$HOME/ocp-sno/auth/kubeconfig"
-oc get nodes
-oc get co
+openshift-install agent wait-for install-complete   --dir . --log-level=info
 ```
 
-모든 Cluster Operator가 `AVAILABLE=True / PROGRESSING=False / DEGRADED=False`인지 확인합니다.
+**6) 확인 및 검증**
 
-### 3.7 Airgap 구성 (`maximo` 계정)
+```bash
+oc get nodes
+oc get co        # 전부 AVAILABLE=True / PROGRESSING=False / DEGRADED=False
+
+# 500GB 디스크의 FSTYPE/MOUNTPOINT가 비어 있어야 LVMS 사용 가능
+oc debug node/mas-it-sno -- chroot /host lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT
+```
+
+<details>
+<summary>참고 — imageDigestSources 개념, 디스크 힌트 대안</summary>
+
+`imageDigestSources`/`imageContentSources`는 **부트스트랩 단계**(클러스터가 아직 없을 때)의 이미지 리다이렉션용이고, `ImageDigestMirrorSet`(IDMS)는 **클러스터 생성 후** 적용하는 리소스입니다(§3.7). 둘 다 필요하며 서로를 대체하지 않습니다.
+
+디바이스명이 불확실하면 `deviceName` 대신 크기·식별자 기반 힌트를 쓸 수 있습니다.
+
+```yaml
+rootDeviceHints:
+  minSizeGigabytes: 200
+  # 또는 wwn / serial / model
+```
+
+</details>
+### 3.7 Airgap 구성 (사용자 계정)
 
 이 단계는 **두 부분**으로 나뉩니다. 순서를 반드시 지키세요.
 
 #### 3.7.1 oc-mirror 생성 리소스 적용 + OperatorHub 기본 소스 비활성화
 
-🔴 **필수 단계**: `mas configure-airgap`은 Registry 접근 검증 / 전역 Pull Secret / IDMS / 사용자 CA 신뢰 / MachineConfig 롤아웃을 처리하지만, **공식 커맨드 레퍼런스 기준으로 Red Hat Operator용 CatalogSource는 생성하지 않습니다.** 따라서 **폐쇄망에서 OLM이 미러링된 Operator 카탈로그를 볼 수 있게 만드는 작업은 이 단계에서 직접 해야 합니다.** 이걸 건너뛰면 cert-manager / DRO / Grafana 등 **MAS 필수 Red Hat Operator를 설치할 수 없어 `mas install`이 실패합니다.**
+🔴 `mas configure-airgap`은 **Red Hat Operator용 CatalogSource를 생성하지 않습니다.** 이 단계를 건너뛰면 cert-manager / DRO / Grafana 등 MAS 필수 Operator를 설치할 수 없어 §3.9가 실패합니다.
 
-⚠️ **미검증 — 두 문서가 엇갈립니다**: IBM 공식 **설치 가이드**는 DRO/Grafana Operator 설치를 위해 `mas configure-airgap --setup-redhat-catalogs`를 사용하도록 안내하는 반면, **커맨드 레퍼런스**의 옵션 목록(`-H`,`-P`,`-u`,`-p`,`--ca-file`,`--no-confirm`,`-h`)에는 이 플래그가 없습니다. **CLI 23.4.1의 실제 도움말로 먼저 확인하세요.**
+⚠️ **미검증** — IBM 설치 가이드는 `mas configure-airgap --setup-redhat-catalogs`를 안내하는데 커맨드 레퍼런스의 옵션 목록에는 없습니다. 실제 도움말로 먼저 확인하세요. 플래그가 있으면 §3.7.2에서 추가해 한 번에 처리하고 아래를 생략할 수 있습니다.
 
 ```bash
 podman run --rm quay.io/ibmmas/cli:23.4.1 mas configure-airgap --help
 ```
 
-- 플래그가 **있으면** → §3.7.2에서 `--setup-redhat-catalogs`를 추가해 CatalogSource까지 한 번에 구성(아래 수동 절차 생략 가능)
-- 플래그가 **없으면** → 아래 수동 절차를 그대로 수행
-
-먼저 폐쇄망 클러스터에서 기본 OperatorHub 소스(인터넷의 `registry.redhat.io` 등을 가리킴)를 비활성화합니다.
+**1) 실행**
 
 ```bash
+# 기본 OperatorHub 소스(인터넷 대상) 비활성화
 oc patch OperatorHub cluster --type json \
   -p '[{"op": "add", "path": "/spec/disableAllDefaultSources", "value": true}]'
 
-oc get catalogsource -n openshift-marketplace
-```
-
-다음으로 `mas mirror-redhat-images`(내부적으로 `oc mirror --v2`)가 생성한 클러스터 리소스(IDMS/ITMS/CatalogSource)를 적용합니다.
-
-```bash
-# 생성된 리소스 위치 확인
-find ~/mas-install/mirror/redhat/working-dir -type d -name "cluster-resources"
+# oc-mirror가 생성한 IDMS/ITMS/CatalogSource 적용 (내용 먼저 검토)
 ls -la ~/mas-install/mirror/redhat/working-dir/cluster-resources/
-
-# 내용을 먼저 검토한 뒤 적용
 oc apply -f ~/mas-install/mirror/redhat/working-dir/cluster-resources/
 ```
 
-IDMS/ITMS 적용은 **MachineConfig 롤아웃(노드 재시작)**을 유발하므로, 다음 단계로 넘어가기 전 반드시 안정화를 기다립니다.
+IDMS/ITMS 적용은 **MachineConfig 롤아웃(노드 재시작)** 을 유발합니다. 안정화 후 다음으로 넘어가세요.
+
+**2) 확인 및 검증**
 
 ```bash
 watch oc get mcp          # UPDATING=False, DEGRADED=False 될 때까지
+
 oc get nodes
 oc get imagedigestmirrorset
 oc get imagetagmirrorset
-oc get catalogsource -n openshift-marketplace
-```
+oc get catalogsource -n openshift-marketplace          # 모두 READY
 
-CatalogSource가 모두 `READY` 상태여야 하고, **MAS가 필요로 하는 Red Hat Operator**가 조회되어야 합니다.
-
-```bash
+# MAS가 요구하는 Red Hat Operator 조회
 oc get packagemanifest -n openshift-marketplace | grep -E 'cert-manager|grafana|ibm-data-reporter|ibm-metrics|lvms'
 ```
 
-> 여기서 확인하는 건 **Red Hat/커뮤니티 Operator**입니다. **IBM Maximo Operator Catalog는 이 시점에 없어도 정상**입니다 — §3.9의 `mas install`이 선택한 카탈로그 버전으로 CatalogSource를 생성합니다.
+> IBM Maximo Operator Catalog는 이 시점에 **없는 것이 정상**입니다 — §3.9의 `mas install`이 생성합니다.
 
 #### 3.7.2 mas configure-airgap 실행
+
+Registry 접근 검증, 전역 Pull Secret, IDMS, 사용자 CA 신뢰를 구성합니다. MachineConfig 롤아웃으로 30~60분 걸릴 수 있습니다.
+
+**1) 실행**
 
 ```bash
 REGISTRY_CA="$(find "$HOME/quay-install" -name rootCA.pem -type f -print -quit)"
@@ -1239,57 +1564,40 @@ podman run -ti --rm \
   -e REGISTRY_PASSWORD \
   -v "$REGISTRY_CA":/mnt/registry-ca.pem:ro,z \
   quay.io/ibmmas/cli:23.4.1 bash -c "
-    oc login --token=<ocp-token> --server=https://api.<cluster-name>.<base-domain>:6443 &&
+    oc login --token=<ocp-token> --server=https://api.mas-it.itmsg.co.kr:6443 &&
     mas configure-airgap \
-      -H registry.<base-domain> -P 8443 \
-      -u <registry-user> -p \"\$REGISTRY_PASSWORD\" \
+      -H registry.mas-it.itmsg.co.kr -P 8443 \
+      -u masadmin -p \"\$REGISTRY_PASSWORD\" \
       --ca-file /mnt/registry-ca.pem \
       --no-confirm
   "
 unset REGISTRY_PASSWORD
 ```
 
-공식 문서 확인 사항: 이 명령은 **ImageDigestMirrorSet(IDMS)**를 생성해 클러스터의 이미지 요청을 Mirror Registry로 리다이렉트합니다. 노드 재시작(MachineConfigPool 롤아웃)으로 30~60분 소요될 수 있습니다.
+**2) 확인 및 검증**
 
 ```bash
-watch oc get mcp
-oc get imagedigestmirrorset
-oc get catalogsource -n openshift-marketplace
-oc get packagemanifest -n openshift-marketplace | grep -i maximo
-```
+watch oc get mcp                    # 롤아웃 완료 대기
 
-**검증 — Pull Secret / CA / 실제 이미지 Pull**
-
-`configure-airgap`은 IDMS 외에 전역 Pull Secret과 CA 신뢰까지 구성하므로, 세 가지를 모두 확인합니다.
-
-```bash
-# 1) IDMS
 oc get imagedigestmirrorset
 
-# 2) 전역 Pull Secret에 미러 Registry 항목이 추가됐는지
+# 전역 Pull Secret에 미러 Registry 항목 추가 확인
 oc get secret pull-secret -n openshift-config \
   -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq -r '.auths | keys[]'
 
-# 3) 사용자 CA 신뢰 번들
+# 사용자 CA 신뢰 번들
 oc get configmap -n openshift-config user-ca-bundle -o yaml | head -20
-
-# 4) MachineConfig 롤아웃 완료 대기 (30~60분 소요 가능)
-watch oc get mcp
 ```
 
-**실제로 미러 Registry에서 Pull이 되는지** 최종 확인합니다(공식 문서 권장 검증).
+미러 Registry에서 실제로 Pull이 되는지 최종 확인합니다. `ImagePullBackOff`면 IDMS·Pull Secret·CA 중 하나가 잘못된 것입니다.
 
 ```bash
-oc run test-pull --image=registry.<base-domain>:8443/ibmmas/cli:23.4.1 --restart=Never
+oc run test-pull --image=registry.mas-it.itmsg.co.kr:8443/ibmmas/cli:23.4.1 --restart=Never
 oc get pod test-pull -w
 oc delete pod test-pull
 ```
 
-Pod가 `Completed`/`Running`까지 가면 성공이고, `ImagePullBackOff`면 IDMS·Pull Secret·CA 중 하나가 잘못된 것입니다.
-
-> ⚠️ **IBM Maximo Operator Catalog(`packagemanifest`에 maximo 항목)는 이 시점에 없는 것이 정상**입니다 — §3.9의 `mas install`이 선택한 카탈로그 버전으로 CatalogSource를 생성하기 때문입니다. 이걸 진행 조건으로 삼으면 정상 설치도 막힙니다.
-
-### 3.8 스토리지 준비 (RWO + RWX StorageClass) (`maximo` 계정)
+### 3.8 스토리지 준비 (RWO + RWX StorageClass) (사용자 계정)
 
 🔴 **필수 단계 (공식 문서 원문)**: *"MAS requires both a `ReadWriteMany` and a `ReadWriteOnce` capable storage class"* — 두 StorageClass가 **`mas install` 실행 전에 이미 클러스터에 존재해야** 합니다. `mas install`은 스토리지를 만들어주지 않고, 기존 StorageClass 목록에서 선택하게만 합니다. 준비 안 하면 이 단계에서 막힙니다.
 
@@ -1309,25 +1617,25 @@ oc get csv -A | grep -iE 'lvm|odf|ocs'
 
 #### 3.8.1 RWO — LVM Storage (LVMS) Operator
 
-SNO의 로컬 디스크를 RWO StorageClass로 제공합니다. `lvms-operator`는 §2.3의 8번 미러링에 포함되어 있습니다(`imageset-ocp4.20.yml`의 `lvms-operator` 항목으로 확인).
+SNO의 로컬 디스크를 RWO StorageClass로 제공합니다. `lvms-operator`(채널 `stable-4.20`)는 §2.3의 8번 미러링에 포함되어 있습니다(`imageset-ocp4.20.yml`).
 
-**① Operator 조회 확인**
+**1) 실행 — 사전 확인**
+
+Operator 조회. 안 보이면 §3.7.1의 CatalogSource 적용 상태를 먼저 확인하세요.
 
 ```bash
 oc get packagemanifest -n openshift-marketplace | grep -i lvms
 ```
 
-안 보이면 §3.7.1의 CatalogSource 적용 상태를 먼저 확인하세요.
-
-**② 대상 디스크 확인** — LVMS가 사용할 **비어 있는(파티션·파일시스템 없는) 디스크**가 필요합니다.
+LVMS는 **비어 있는(파티션·파일시스템 없는) 디스크**가 필요합니다. 500GB의 `FSTYPE`/`MOUNTPOINT`가 비어 있는지 확인하고 그 디바이스명을 아래 `deviceSelector.paths`에 씁니다.
 
 ```bash
-oc debug node/<sno-node-name> -- chroot /host lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT
+oc debug node/mas-it-sno -- chroot /host lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT
 ```
 
-⚠️ OS가 설치된 디스크는 쓸 수 없습니다. **데이터용 빈 디스크(예: `/dev/sdb`)가 SNO에 물려 있어야** 하며, 없으면 VM에 디스크를 추가한 뒤 진행하세요.
+⚠️ 빈 디스크가 없으면 §3.6의 `rootDeviceHints`가 잘못 지정되어 OS가 500GB에 설치된 것입니다 — SNO 재설치가 필요합니다.
 
-**③ Operator 설치** (Namespace / OperatorGroup / Subscription)
+**2) 실행 — Operator 설치**
 
 ```bash
 cat <<'EOF' | oc apply -f -
@@ -1359,13 +1667,15 @@ spec:
 EOF
 ```
 
-> `source`에는 §3.7.1에서 적용된 실제 CatalogSource 이름을 넣습니다 — `oc get catalogsource -n openshift-marketplace`로 확인하세요(oc-mirror가 생성한 이름은 `cs-redhat-operator-index` 형태일 수 있습니다).
+> `source`에는 §3.7.1에서 적용된 실제 CatalogSource 이름을 넣습니다 — `oc get catalogsource -n openshift-marketplace`로 확인하세요(`cs-redhat-operator-index` 형태일 수 있습니다).
 
 ```bash
 oc get csv -n openshift-storage -w     # Succeeded 대기
 ```
 
-**④ LVMCluster 생성** — `deviceSelector.paths`에 ②에서 확인한 빈 디스크를 지정합니다.
+**3) 실행 — LVMCluster 생성**
+
+`deviceSelector.paths`에 1)에서 확인한 빈 디스크를 지정합니다.
 
 ```bash
 cat <<'EOF' | oc apply -f -
@@ -1392,37 +1702,31 @@ EOF
 oc get lvmcluster -n openshift-storage -w    # Ready 대기
 ```
 
-**⑤ StorageClass 확인** — deviceClass 이름이 `vg1`이면 `lvms-vg1`이 생성됩니다.
+⚠️ `LVMCluster`의 `apiVersion`(`lvm.topolvm.io/v1alpha1`)은 미검증입니다. 적용 전 `oc explain lvmcluster`로 확인하세요.
+
+**4) 확인 및 검증** — deviceClass 이름이 `vg1`이면 `lvms-vg1`이 생성됩니다.
 
 ```bash
 oc get storageclass
 oc get lvmcluster -n openshift-storage -o jsonpath='{.items[0].status}{"\n"}'
 ```
 
-⚠️ **미검증**: 위 `Subscription`의 `channel`(`stable-4.20`)과 `LVMCluster` CR의 `apiVersion`(`lvm.topolvm.io/v1alpha1`)은 LVMS 버전에 따라 다를 수 있습니다. 적용 전 `oc get packagemanifest lvms-operator -n openshift-marketplace -o jsonpath='{.status.channels[*].name}'`로 채널을, `oc explain lvmcluster`로 API 버전을 확인하세요.
-
 #### 3.8.2 RWX — 방식 선택
 
-**⚠️ 두 방식 모두 폐쇄망에서는 추가 이미지 반입이 필요합니다. 인터넷 연결이 살아있는 동안(=§2 단계에서) 미리 확보해야 합니다.**
+**⚠️ 두 방식 모두 폐쇄망에서는 추가 이미지 반입이 필요합니다. 인터넷 연결이 살아있는 §2 단계에서 미리 확보해야 합니다.**
 
 ---
 
-##### 방식 A — 외부 NFS (이번 배포 채택, Bastion을 NFS 서버로 겸용)
+##### 방식 A — 외부 NFS (이번 배포 채택, Bastion 겸용)
 
-**장점**: SNO 리소스 부담이 거의 없고 구성이 단순합니다.
-**⚠️ 운영 리스크**: Bastion이 **런타임 의존성**이 됩니다 — 설치 때만 쓰이는 게 아니라, Bastion(NFS 서버)이 내려가면 MAS의 RWX 볼륨이 끊깁니다. Bastion은 이미 Mirror Registry도 겸하고 있어 단일 장애점이 됩니다. 운영 환경에서는 별도 NFS 스토리지 장비를 권장합니다.
+⚠️ Bastion이 **런타임 의존성**이 됩니다 — NFS가 내려가면 MAS의 RWX 볼륨이 끊깁니다. Mirror Registry까지 겸하므로 단일 장애점이고, 프로비저너는 **커뮤니티 프로젝트로 Red Hat/IBM 미지원**입니다.
 
-**A-1. Bastion에 NFS 서버 구성** (root 계정)
-
-`nfs-utils`는 §3.1에서 이미 설치했습니다. 설치되어 있는지 먼저 확인합니다.
+**1) 실행 — Bastion에 NFS 서버 구성** (root 계정)
 
 ```bash
-rpm -q nfs-utils || dnf --disablerepo='*' --enablerepo=mas-offline install -y nfs-utils
-
-# 공유 디렉터리 생성 (충분한 용량의 디스크에 위치)
 install -d -m 0777 /export/mas-rwx
 
-# ⚠️ /etc/exports 를 덮어쓰지 않도록 별도 파일로 추가 (기존 export 보존)
+# 기존 export 보존을 위해 /etc/exports 대신 별도 파일 사용
 cat > /etc/exports.d/mas-rwx.exports <<'EOF'
 /export/mas-rwx 192.168.0.0/22(rw,sync,no_subtree_check,no_root_squash)
 EOF
@@ -1430,114 +1734,83 @@ EOF
 exportfs -rav
 systemctl enable --now nfs-server
 
-# 방화벽 (NFSv4는 2049만으로 충분, v3 호환 필요 시 rpc-bind/mountd 추가)
-firewall-cmd --permanent --add-service=nfs
-firewall-cmd --permanent --add-service=rpc-bind
-firewall-cmd --permanent --add-service=mountd
+firewall-cmd --permanent --add-service={nfs,rpc-bind,mountd}
 firewall-cmd --reload
-
-exportfs -s
-showmount -e localhost
 ```
 
-> `no_root_squash`는 컨테이너가 root로 파일을 쓸 수 있게 하려면 필요하지만 보안상 완화 설정입니다. 사이트 보안 정책에 따라 조정하고, 접근 대역(`192.168.0.0/22`)을 실제 필요한 범위로 좁히세요.
+> `no_root_squash`는 컨테이너가 root로 쓰기 위해 필요하지만 보안 완화 설정입니다. 사이트 정책에 맞춰 접근 대역을 좁히세요.
 
-**A-2. OpenShift에 NFS 동적 프로비저너 배포**
+**2) 실행 — 프로비저너 이미지 push** (사용자 계정)
 
-`mas install`은 StorageClass 이름을 요구하므로 **동적 프로비저닝이 가능한 프로비저너가 필요**합니다(정적 PV만으로는 부족). 두 가지 선택지가 있고 **둘 다 커뮤니티 프로젝트(Red Hat 미지원)**입니다.
-
-| 프로비저너 | 필요 이미지 | 특징 |
-|---|---|---|
-| `nfs-subdir-external-provisioner` | 1개 | 구성 단순, 볼륨 스냅샷 미지원. 이번 PoC에 적합 |
-| `csi-driver-nfs` | 5~6개 (CSI sidecar 포함) | 최신 CSI 표준, 스냅샷 지원. 이미지 수가 많아 반입 부담 |
-
-이번 배포는 **`nfs-subdir-external-provisioner`(이미지 1개)** 를 권장합니다. §2.3의 10번에서 받아둔 tar와 YAML을 사용합니다.
-
-**① 프로비저너 이미지를 미러 Registry에 push** (`maximo` 계정)
+§2.3의 10번에서 받아둔 자산을 사용합니다.
 
 ```bash
 podman load -i ~/mas-install/nfs-provisioner/nfs-subdir-external-provisioner.tar
 
 read -s REGISTRY_PASSWORD
-podman login registry.<base-domain>:8443 -u <registry-user> --password-stdin <<< "$REGISTRY_PASSWORD"
+podman login registry.mas-it.itmsg.co.kr:8443 -u masadmin --password-stdin <<< "$REGISTRY_PASSWORD"
 
-podman tag \
-  registry.k8s.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2 \
-  registry.<base-domain>:8443/sig-storage/nfs-subdir-external-provisioner:v4.0.2
-
-podman push \
-  registry.<base-domain>:8443/sig-storage/nfs-subdir-external-provisioner:v4.0.2
+podman tag  registry.k8s.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2 \
+            registry.mas-it.itmsg.co.kr:8443/sig-storage/nfs-subdir-external-provisioner:v4.0.2
+podman push registry.mas-it.itmsg.co.kr:8443/sig-storage/nfs-subdir-external-provisioner:v4.0.2
 
 unset REGISTRY_PASSWORD
 ```
 
-**② YAML 수정 후 배포**
+**3) 실행 — YAML 수정 후 배포**
 
-✅ **검증 완료 (2026-07-30, 실제 받은 YAML 확인)**: 받은 파일의 기본값은 다음과 같습니다 — ServiceAccount·Deployment 이름 모두 `nfs-client-provisioner`, StorageClass 이름 `nfs-client`, provisioner `k8s-sigs.io/nfs-subdir-external-provisioner`, namespace는 `default`. **NFS 서버 주소와 경로가 `env`(NFS_SERVER/NFS_PATH)와 `volumes.nfs`(server/path) 총 4곳에 중복 기재**되어 있으므로 전부 바꿔야 합니다(아래 `sed`가 4곳을 한 번에 처리).
+받은 YAML의 기본값: SA·Deployment 이름 `nfs-client-provisioner`, StorageClass `nfs-client`, namespace `default`, NFS 주소·경로가 `env`와 `volumes` **총 4곳에 중복**.
 
 ```bash
 cd ~/mas-install/nfs-provisioner
 oc create ns nfs-provisioner
 
-# 1) namespace: default → nfs-provisioner (rbac.yaml 3곳, deployment.yaml 1곳)
 sed -i 's/namespace: default/namespace: nfs-provisioner/g' rbac.yaml deployment.yaml
+sed -i 's/10\.3\.243\.101/192.168.2.210/g'                 deployment.yaml   # NFS 서버 (2곳)
+sed -i 's|/ifs/kubernetes|/export/mas-rwx|g'               deployment.yaml   # NFS 경로 (2곳)
+sed -i 's|registry.k8s.io/sig-storage/|registry.mas-it.itmsg.co.kr:8443/sig-storage/|' deployment.yaml
 
-# 2) NFS 서버 IP: 기본값 10.3.243.101 → Bastion (env + volumes, 2곳)
-sed -i 's/10\.3\.243\.101/192.168.2.210/g' deployment.yaml
+grep -nE 'namespace:|image:|NFS_SERVER|NFS_PATH|server:|path:' deployment.yaml   # 치환 확인
 
-# 3) NFS 경로: 기본값 /ifs/kubernetes → 실제 export 경로 (env + volumes, 2곳)
-sed -i 's|/ifs/kubernetes|/export/mas-rwx|g' deployment.yaml
-
-# 4) 이미지 경로: 미러 Registry로 교체
-sed -i 's|registry.k8s.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2|registry.<base-domain>:8443/sig-storage/nfs-subdir-external-provisioner:v4.0.2|' deployment.yaml
+oc apply -f rbac.yaml -f deployment.yaml -f class.yaml
 ```
 
-수정 결과를 반드시 눈으로 확인합니다.
+**4) 확인 및 검증**
 
 ```bash
-grep -nE 'namespace:|image:|NFS_SERVER|NFS_PATH|server:|path:|value:' deployment.yaml
-grep -n 'namespace:' rbac.yaml
-```
-
-`192.168.2.210`이 2번, `/export/mas-rwx`가 2번, 이미지가 미러 Registry 경로로 바뀌었는지 확인한 뒤 적용합니다.
-
-```bash
-oc apply -f rbac.yaml
-oc apply -f deployment.yaml
-oc apply -f class.yaml
-```
-
-> `class.yaml`의 `archiveOnDelete: "false"`는 **PVC 삭제 시 NFS의 데이터도 함께 삭제**한다는 뜻입니다. 운영 환경에서 실수로 인한 데이터 유실을 막으려면 `"true"`로 바꿔 데이터를 보관(archive)하도록 하세요.
-
-⚠️ **OpenShift 특이사항 (미검증)**: 이 프로비저너의 ServiceAccount는 기본 SCC로 NFS 마운트 권한이 부족할 수 있습니다. Pod가 `CrashLoopBackOff`/권한 오류를 내면 SCC를 부여합니다.
-
-```bash
-oc adm policy add-scc-to-user hostmount-anyuid \
-  -z nfs-client-provisioner -n nfs-provisioner
-```
-
-**③ 배포 확인**
-
-```bash
+showmount -e localhost               # /export/mas-rwx 가 보여야 함
 oc get pods -n nfs-provisioner
-oc logs -n nfs-provisioner deploy/nfs-client-provisioner
-oc get storageclass          # nfs-client 가 보여야 함
+oc get storageclass                  # nfs-client 가 보여야 함
 ```
 
-Pod가 `Running`이고 StorageClass `nfs-client`가 보이면 §3.8.3(내부 Image Registry) → §3.8.4(검증)로 진행합니다. 프로젝트가 제공하는 테스트 매니페스트로 곧바로 확인해볼 수도 있습니다.
+Pod가 `CrashLoopBackOff`/권한 오류면 SCC를 부여합니다(⚠️ 필요 여부 미검증).
+
+```bash
+oc adm policy add-scc-to-user hostmount-anyuid -z nfs-client-provisioner -n nfs-provisioner
+```
+
+<details>
+<summary>참고 — 프로비저너 선택지, archiveOnDelete, 제공 테스트 매니페스트</summary>
+
+| 프로비저너 | 이미지 수 | 특징 |
+|---|---|---|
+| `nfs-subdir-external-provisioner` (채택) | 1개 | 단순, 스냅샷 미지원 |
+| `csi-driver-nfs` | 5~6개 | CSI 표준·스냅샷 지원, 반입 부담 큼 |
+
+`class.yaml`의 `archiveOnDelete: "false"`는 **PVC 삭제 시 NFS 데이터도 삭제**합니다. 운영에서는 `"true"`로 두어 보관하는 편이 안전합니다.
+
+프로젝트 제공 테스트 매니페스트로도 확인 가능합니다. 단 `test-pod.yaml`이 외부 이미지를 참조하면 폐쇄망에서 Pull이 실패하므로, 그때는 §3.8.4의 자체 테스트를 쓰세요.
 
 ```bash
 oc apply -n nfs-provisioner -f test-claim.yaml -f test-pod.yaml
 oc get pvc,pod -n nfs-provisioner
-# 정상이면 Bastion에서 파일이 생성됐는지 직접 확인
 ls -la /export/mas-rwx/
 oc delete -n nfs-provisioner -f test-pod.yaml -f test-claim.yaml
 ```
 
-⚠️ `test-pod.yaml`은 기본적으로 외부 이미지(`gcr.io/google_containers/busybox` 등)를 참조할 수 있어 폐쇄망에서 Pull이 실패할 수 있습니다. 그 경우 §3.8.4의 자체 테스트(미러 Registry 이미지 사용)를 쓰세요.
+</details>
 
 ---
-
 ##### 방식 B — ODF (OpenShift Data Foundation) — 대안
 
 **장점**: Red Hat 지원 제품이고 CephFS로 RWX를 제공하며, Bastion에 런타임 의존하지 않습니다.
@@ -1558,19 +1831,16 @@ oc get storageclass | grep -i cephfs   # RWX용: ocs-storagecluster-cephfs
 
 #### 3.8.3 OpenShift 내부 Image Registry 구성
 
-🔴 **`platform: none`(베어메탈/UPI) 설치에서는 내부 Image Registry가 자동 구성되지 않습니다.** 기본값이 `managementState: Removed`이거나 스토리지가 없어 `Degraded` 상태로 남습니다.
+🔴 `platform: none` 설치에서는 내부 Image Registry가 자동 구성되지 않습니다(`managementState: Removed` 또는 스토리지 없음). Manage는 배포 중 **Admin/Server Bundle 이미지를 직접 빌드해 Push**하므로, 저장할 레지스트리가 없으면 배포가 중단됩니다.
 
-**왜 필요한가**: Maximo Manage는 배포 과정에서 **Admin/Server Bundle 이미지를 직접 빌드해 레지스트리에 Push**합니다. 저장할 레지스트리가 없으면 **Manage 배포가 중단**됩니다. 따라서 `mas install` 전에 내부 Registry에 스토리지를 붙여 활성화해야 합니다.
+**1) 실행**
 
 ```bash
+# 현재 상태 확인
 oc get configs.imageregistry.operator.openshift.io cluster \
   -o jsonpath='{.spec.managementState}{"\n"}{.spec.storage}{"\n"}'
-oc get co image-registry
-```
 
-`Removed`이거나 스토리지가 비어 있으면 PVC를 붙여 `Managed`로 전환합니다. **RWX StorageClass(§3.8.2에서 만든 `nfs-client`)를 쓰면 향후 복제본 확장에도 안전**합니다.
-
-```bash
+# PVC 생성 후 Managed 전환
 cat <<'EOF' | oc apply -f -
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -1589,7 +1859,9 @@ oc patch configs.imageregistry.operator.openshift.io cluster --type merge -p \
   '{"spec":{"managementState":"Managed","storage":{"pvc":{"claim":"image-registry-storage"}}}}'
 ```
 
-활성화 확인:
+⚠️ **미검증**: `200Gi`는 예시값이며 Manage 워크스페이스 수와 재빌드 이력에 따라 달라집니다. Manage가 내부 Registry를 쓰는지 별도 Registry를 지정하는지도 IBM 공식 문서로 재확인이 필요합니다.
+
+**2) 확인 및 검증**
 
 ```bash
 oc get pvc -n openshift-image-registry
@@ -1597,81 +1869,75 @@ oc get pods -n openshift-image-registry
 oc get co image-registry     # AVAILABLE=True, DEGRADED=False
 ```
 
-⚠️ **미검증**: 용량 `200Gi`는 Manage 번들 이미지를 여유 있게 담기 위한 예시값입니다. 실제 필요량은 Manage 워크스페이스 수와 재빌드 이력에 따라 달라지므로 사이트 기준으로 조정하세요. 또 **Manage가 내부 Registry를 쓰는지, 아니면 별도 고객 Registry를 지정하는지는 `mas install`/Manage 배포 설정에 따라 달라질 수 있어** IBM 공식 Manage 배포 문서로 재확인이 필요합니다.
+#### 3.8.4 스토리지 검증 — PVC 바인딩 + 쓰기 테스트
 
-#### 3.8.4 검증 — 실제 PVC 바인딩 테스트
+`mas install` 전에 두 StorageClass가 실제로 동작하는지 확인합니다.
 
-두 StorageClass가 모두 준비되면 실제로 바인딩되는지 검증합니다.
+**1) 실행 — PVC 바인딩**
 
 ```bash
 oc create ns storage-test
 
-# RWO 테스트 (예: lvms-vg1)
-cat <<'EOF' | oc apply -n storage-test -f -
+for M in ReadWriteOnce:lvms-vg1:rwo ReadWriteMany:nfs-client:rwx; do
+  MODE=${M%%:*}; REST=${M#*:}; SC=${REST%%:*}; NAME=${REST##*:}
+  cat <<EOF | oc apply -n storage-test -f -
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: test-rwo
+  name: test-$NAME
 spec:
-  accessModes: [ReadWriteOnce]
+  accessModes: [$MODE]
   resources:
     requests:
       storage: 1Gi
-  storageClassName: <rwo-storage-class>
+  storageClassName: $SC
 EOF
+done
 
-# RWX 테스트 (예: nfs-client 또는 ocs-storagecluster-cephfs)
-cat <<'EOF' | oc apply -n storage-test -f -
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: test-rwx
-spec:
-  accessModes: [ReadWriteMany]
-  resources:
-    requests:
-      storage: 1Gi
-  storageClassName: <rwx-storage-class>
-EOF
-
-oc get pvc -n storage-test
+oc get pvc -n storage-test        # 둘 다 Bound 여야 함
 ```
 
-두 PVC 모두 `Bound` 상태여야 합니다. `Pending`이면 `oc describe pvc -n storage-test <name>`으로 원인을 확인하세요(프로비저너 미동작, SCC 권한, NFS export 권한 등).
+`Pending`이면 원인을 확인합니다 — 프로비저너 미동작, SCC 권한, NFS export 권한 등.
 
-**실제 쓰기 테스트**까지 하는 것을 권장합니다 — 특히 NFS는 마운트는 되지만 권한 때문에 쓰기가 실패하는 경우가 흔합니다.
+```bash
+oc describe pvc -n storage-test test-rwx
+```
+
+**2) 실행 — 쓰기 테스트**
+
+NFS는 마운트만 되고 쓰기가 실패하는 경우가 흔하므로 반드시 확인합니다. 이미지 경로는 미러 Registry에 실제 존재하는 것으로 교체하세요(`curl -sk -u <user> https://<registry>:8443/v2/_catalog`).
 
 ```bash
 cat <<'EOF' | oc apply -n storage-test -f -
 apiVersion: v1
 kind: Pod
 metadata:
-  name: test-rwx-writer
+  name: test-writer
 spec:
+  restartPolicy: Never
   containers:
     - name: writer
-      image: registry.<base-domain>:8443/openshift4/ose-tools-rhel9:latest
-      command: ["/bin/sh","-c","echo ok > /data/test.txt && cat /data/test.txt && sleep 30"]
-      volumeMounts:
-        - name: data
-          mountPath: /data
+      image: registry.mas-it.itmsg.co.kr:8443/openshift4/ose-tools-rhel9:latest
+      command: ["/bin/sh","-c","echo ok > /data/test.txt && cat /data/test.txt"]
+      volumeMounts: [{name: data, mountPath: /data}]
   volumes:
     - name: data
-      persistentVolumeClaim:
-        claimName: test-rwx
-  restartPolicy: Never
+      persistentVolumeClaim: {claimName: test-rwx}
 EOF
-
-oc logs -n storage-test test-rwx-writer -f
 ```
 
-`ok`가 출력되면 정상입니다(이미지 경로는 미러 Registry에 실제로 있는 것으로 교체하세요). 확인 후 정리합니다.
+**3) 확인 및 검증**
 
 ```bash
-oc delete ns storage-test
+oc logs -n storage-test test-writer -f      # ok 출력되면 정상
+ls -la /export/mas-rwx/                     # Bastion에서 파일 생성 확인
+
+oc delete ns storage-test                   # 정리
 ```
 
-### 3.9 MAS Core 설치 (`maximo` 계정)
+### 3.9 MAS Core 설치 (사용자 계정)
+
+**1) 실행**
 
 ```bash
 export IBM_ENTITLEMENT_KEY=$(cat ~/mas-install/licenses/entitlement_key.key)
@@ -1680,7 +1946,7 @@ podman run -ti --rm \
   -e IBM_ENTITLEMENT_KEY \
   -v "$HOME":/mnt/home:z \
   quay.io/ibmmas/cli:23.4.1 bash -c "
-    oc login --token=<ocp-token> --server=https://api.<cluster-name>.<base-domain>:6443 &&
+    oc login --token=<ocp-token> --server=https://api.mas-it.itmsg.co.kr:6443 &&
     mas install
   "
 unset IBM_ENTITLEMENT_KEY
@@ -1710,7 +1976,7 @@ oc auth can-i '*' '*' --all-namespaces     # yes 여야 함
 | 인스턴스 | **Operational Mode** | 운영/비운영(production / non-production) — **라이선스 소비에 영향** |
 | 계정 | **Superuser** 사용자명/비밀번호 | MAS 최초 관리자 계정 |
 | 계정 | **담당자 정보**(Contact) | 이름/이메일 — SLS 등록 정보 |
-| 도메인 | 기본 서브도메인 또는 커스텀 도메인 | `apps.<cluster-name>.<base-domain>` 기반 |
+| 도메인 | 기본 서브도메인 또는 커스텀 도메인 | `apps.mas-it.itmsg.co.kr` 기반 |
 | 고급 | **Admin Mode** | 관리자 전용 접근 모드 여부 |
 | 고급 | **Network Routing Mode** | Route 노출 방식 |
 | 고급 | SSO / Guided Tours 등 | 환경 정책에 따라 |
@@ -1718,11 +1984,21 @@ oc auth can-i '*' '*' --all-namespaces     # yes 여야 함
 | DB | 데이터베이스 | **내장 Db2 자동 프로비저닝 선택** |
 | 기타 | Pod QoS 등 | 기본값 권장 |
 
-클러스터에 airgap용 `ImageDigestMirrorSet`(이름 예: `mas-and-dependencies`)이 이미 있으면 `mas install`이 이를 감지해 폐쇄망 설치 흐름으로 자동 전환됩니다(인터넷에서 직접 받는 옵션은 제거됨).
+클러스터에 airgap용 `ImageDigestMirrorSet`이 이미 있으면 `mas install`이 이를 감지해 폐쇄망 설치 흐름으로 자동 전환됩니다.
 
-> `mas install`은 마지막에 **동일 설치를 재현할 수 있는 비대화형 명령**을 출력합니다. 이후 재설치·다른 사이트 배포를 위해 **반드시 보관**하세요(비밀번호는 마스킹 후).
+> `mas install`은 마지막에 **동일 설치를 재현할 수 있는 비대화형 명령**을 출력합니다. 재설치·다른 사이트 배포를 위해 **반드시 보관**하세요(비밀번호는 마스킹 후).
 
-⚠️ **미검증**: 위 항목 목록은 공식 install 가이드의 흐름을 정리한 것으로, CLI 23.4.1의 실제 프롬프트와 순서·명칭이 다를 수 있습니다. 특히 `Pipeline Storage`, `Operational Mode`의 정확한 선택지는 실행 화면에서 확인하세요.
+⚠️ **미검증**: 위 항목 목록은 공식 install 가이드 기준이며 CLI 23.4.1의 실제 프롬프트와 순서·명칭이 다를 수 있습니다. 특히 `Pipeline Storage`, `Operational Mode`의 선택지는 실행 화면에서 확인하세요.
+
+**2) 확인 및 검증**
+
+```bash
+oc get suite -A
+oc get subscriptions -A
+oc get catalogsource -n openshift-marketplace
+oc get pods -n mas-inst1-core | grep -v Running | grep -v Completed
+oc get route -A | grep -E 'admin|mas'
+```
 
 ### 3.10 Manage + Maximo IT 배포·활성화 (웹 UI, Suite Administration 관리자 계정)
 
@@ -1731,9 +2007,9 @@ oc auth can-i '*' '*' --all-namespaces     # yes 여야 함
 > - Maximo IT 배포: <https://www.ibm.com/docs/en/max-it/cd.0.0_cd?topic=it-deploying-maximo-maximo-manage>
 > - Maximo IT 라이선스: <https://www.ibm.com/docs/en/max-it/cd.0.0_cd?topic=suite-licensing-maximo-it-in-maximo-application>
 
-**기본 흐름**
+**1) 실행 — 기본 흐름**
 
-1. Suite Administration(`https://admin.<mas-instance-id>.apps.<cluster-name>.<base-domain>`)에 §3.9의 Superuser로 로그인
+1. Suite Administration(`https://admin.inst1.apps.mas-it.itmsg.co.kr`)에 §3.9의 Superuser로 로그인
 2. Catalog에서 **Manage** 선택
 3. **버전 선택** — ⚠️ 아래 "버전 호환성" 참고
 4. Workspace **Components**에서 **Maximo IT(ICD) add-on** 활성화
@@ -1744,29 +2020,39 @@ oc auth can-i '*' '*' --all-namespaces     # yes 여야 함
 9. 활성화 완료 후 **관리자 권한 동기화 및 재로그인**
 10. Maximo IT 애플리케이션 접근 확인
 
-**⚠️ 반드시 확인할 항목들**
+**2) 확인 및 검증** — 진행 전 아래 항목을 확정하세요.
 
-| 항목 | 내용 |
+| 항목 | 내용 | 근거 |
+|---|---|---|
+| **Db2 테이블 구성 (ROW)** | 🔴 **Manage는 row-organized 테이블을 요구합니다.** Db2가 column-organized(기본값이 그럴 수 있음)로 설정되어 있으면 Manage가 정상 동작하지 않습니다. `DFT_TABLE_ORG`를 `ROW`로 설정해야 합니다. | ✅ 공식(MAS Performance Wiki, ansible-devops db2 role) |
+| **Db2 워크로드 설정** | `db2_workload=maximo` 레지스트리 설정 시 `WLM_ADMISSION_CTRL`이 `NO`로 자동 구성됩니다. ansible-devops db2 role 기준 Manage용 권장값은 `db2_table_org: ROW`. | ✅ 공식 |
+| **Db2 디스크 성능** | 권장 **처리량 250MB/s 이상**, **10~100 IOPS/GB**. 시스템/사용자/백업/트랜잭션 로그/임시 테이블스페이스를 **분리된 디스크**에 두는 것을 권장. | ✅ 공식 |
+| **버전 호환성** | Manage 버전과 Maximo IT(ICD) 버전은 **호환되는 조합**이어야 합니다. `latest`와 특정 버전을 **혼용하지 마세요** — 한쪽만 `latest`면 이후 업데이트에서 조합이 깨집니다. 양쪽 모두 명시적 버전 고정 권장. | ⚠️ 미검증 |
+| **한국어 사용 시 VARGRAPHIC** | 🔴 한국어 등 멀티바이트 언어 사용 시 Maximo가 **VARGRAPHIC** 컬럼 타입을 쓰도록 설정해야 할 수 있습니다. **DB 생성/Manage 활성화 시점에 결정되며 이후 변경이 매우 어렵습니다.** | ⚠️ **미검증 — 반드시 확인** (아래 참고) |
+| **언어 설정** | 활성화 시 기본 언어와 추가 언어를 지정합니다. 추가 언어는 DB 크기와 활성화 시간을 늘립니다. | ⚠️ 미검증 |
+| **Server Bundle 구성** | **UI / CRON / MIF(Integration) / Report 워크로드를 별도 번들로 분리**하면 동일 JVM 내 리소스 경합이 줄어듭니다. `ManageWorkspace` CR에서 번들별 replica·CPU·메모리를 조정합니다. | ✅ 공식(Performance Wiki) |
+| **관리자 권한 동기화** | 활성화 직후 Maximo IT 메뉴가 안 보일 수 있습니다. 권한 동기화 후 **로그아웃 → 재로그인** 필요. | ⚠️ 미검증 |
+| **활성화 후 설정** | 활성화 완료가 끝이 아닙니다 — 사용자/그룹 권한, AppPoints 할당, IT 초기 설정이 이어집니다. | ⚠️ 미검증 |
+
+> ⚠️ "Server Bundle 분리"와 "Db2 테이블스페이스 디스크 분리"는 다중 노드/전용 스토리지 전제의 성능 권장사항입니다. SNO 단일 노드에서는 기본 구성으로 시작하세요.
+
+🔴 **VARGRAPHIC과 AppPoints는 진행 전에 확정하세요.** 둘 다 나중에 되돌리기 어렵습니다.
+
+| 확인할 것 | 왜 |
 |---|---|
-| **버전 호환성** | Manage 버전과 Maximo IT(ICD) 버전은 **호환되는 조합**이어야 합니다. `latest`와 특정 버전을 **혼용하지 마세요** — 한쪽만 `latest`로 두면 이후 업데이트에서 조합이 깨집니다. 양쪽 모두 명시적 버전으로 고정하는 것을 권장합니다. |
-| **한국어 사용 시 Db2 VARGRAPHIC** | 🔴 한국어 등 멀티바이트 언어를 사용하려면 Db2에서 **VARGRAPHIC** 데이터 타입 설정이 필요합니다. 이 설정은 **DB 생성/Manage 활성화 시점에 결정**되며 나중에 바꾸기 매우 어렵습니다. 한국어 사용이 확정이면 **활성화 전에** Manage DB 설정에서 반드시 지정하세요. |
-| **언어와 Server Bundle** | 추가 언어를 넣으면 DB 크기와 활성화 시간이 늘어납니다. Server Bundle 구성(`all` vs 분리)은 SNO 리소스를 고려해 결정하세요. |
-| **관리자 권한 동기화** | 활성화 직후에는 Maximo IT 메뉴가 보이지 않을 수 있습니다. 권한 동기화 후 **로그아웃 → 재로그인**이 필요합니다. |
-| **활성화 후 설정** | 활성화 완료가 끝이 아닙니다 — 사용자/그룹 권한, AppPoints 할당, IT 관련 초기 설정이 이어집니다. |
+| 한국어 사용 시 VARGRAPHIC 설정 **위치** (Db2 레벨 vs Manage 활성화 레벨) | ansible-devops `db2` role에 문자셋 전용 변수가 없어 어디서 설정하는지 미확정. DB 생성/활성화 시점에 결정되면 이후 변경이 매우 어려움 |
+| 라이선스에 **Maximo IT용 AppPoints 항목**이 실제로 포함되어 있는지 | MAS Entitlement와 Maximo IT Entitlement는 **각각** 필요. 없으면 Manage는 배포되지만 IT add-on 활성화 또는 사용자 할당에서 막힘 |
 
-⚠️ **미검증**: 위 표의 세부 사항(특히 VARGRAPHIC 지정 위치, Server Bundle 선택지 명칭, 권한 동기화 절차)은 공식 문서 원문으로 확정하지 못했습니다. 실제 진행 시 화면과 위 공식 문서를 대조하며 수행하고, 확인된 내용으로 이 절을 갱신하세요.
+참고 문서:
 
-**라이선스 — ⚠️ 확인 필요**: IBM 공식 문서 기준으로 Maximo IT는 **MAS Entitlement와 별개로 Maximo IT 자체 구매·Entitlement가 모두 필요**합니다. 라이선스 파일(`lincense_poc.dat`)을 보유하고 있다는 사실만으로는 **그 안에 Maximo IT AppPoints가 포함되어 있다는 보장이 되지 않습니다.**
+- [Db2 configuration — MAS](https://www.ibm.com/docs/en/masv-and-l/cd?topic=deployment-configuring-db2)
+- [Database configuration details for Maximo Manage](https://www.ibm.com/docs/en/masv-and-l/cd?topic=install-database-configuration-details-maximo-manage)
+- [MAS Performance Wiki — Manage best practice](https://ibm-mas.github.io/mas-performance/mas/manage/bestpractice/)
+- [ansible-devops db2 role](https://ibm-mas.github.io/ansible-devops/roles/db2/)
 
-배포 전 아래를 확인하세요.
+### 3.11 설치 후 확인 (사용자 계정)
 
-- IBM License Key Center에서 발급한 라이선스에 **Maximo IT용 AppPoints 항목이 실제로 포함**되어 있는지
-- 구매 계약에 Maximo IT 권한이 있는지
-- 설치 후 SLS(Suite License Service)에서 IT AppPoints가 인식되는지 (§3.11 체크리스트)
-
-AppPoints가 없으면 Manage 배포는 되더라도 **Maximo IT add-on 활성화 또는 사용자 할당 단계에서 막힙니다.**
-
-### 3.11 설치 후 확인 (`maximo` 계정)
+**1) 확인 및 검증**
 
 ```bash
 oc get nodes
@@ -1775,14 +2061,13 @@ oc get mcp
 oc get suite -A
 oc get manageapp -A
 oc get manageworkspace -A
-oc get subscriptions -A
-oc get catalogsource -n openshift-marketplace
 oc get imagedigestmirrorset
 oc get pods -A | grep -v Running | grep -v Completed | grep -v Succeeded
 oc get route -A | grep -E 'mas|manage|admin'
 ```
 
 체크리스트:
+
 - [ ] OCP 노드가 외부 Registry에 접근하지 않고 Mirror Registry에서만 이미지 Pull
 - [ ] MAS Core, Manage Operator 정상(Ready)
 - [ ] Suite Administration에서 Manage + Maximo IT add-on이 Ready/Active
@@ -1791,130 +2076,132 @@ oc get route -A | grep -E 'mas|manage|admin'
 
 ---
 
-## 4. 검증 상태 요약
+## 4. 트러블슈팅
 
-### 4.1 ⚠️ 아직 열린 항목 (실행 전 반드시 확인)
+### 4.1 `:Z` vs `:z` SELinux 라벨 충돌
 
-**A. 실행하면서 즉시 확인 가능한 것 (`--help` / 실제 명령)**
+**증상**: 미러링을 여러 터미널에서 동시에 실행하면 로그 파일 쓰기 단계에서 `Permission denied`로 실패.
 
-| # | 항목 | 확인 방법 | 관련 절 |
-|---|---|---|---|
-| A1 | `mas configure-airgap --setup-redhat-catalogs` 실존 여부 — **IBM 설치 가이드와 커맨드 레퍼런스가 엇갈림** | `mas configure-airgap --help` | §3.7.1 |
-| A2 | `install-config.yaml`의 필드명이 `imageDigestSources`인지 `imageContentSources`인지 | `openshift-install explain installconfig \| grep -i image` | §3.6 |
-| A3 | `mirror-registry install`의 `--quayStorage`/`--sqliteStorage` 플래그명 (구버전은 `--pgStorage`) | `./mirror-registry install --help` | §3.4 |
-| A4 | oc-mirror 산출 `cluster-resources` 실제 경로·파일명 (IDMS source/mirror 값 출처) | `find .../working-dir -name "*idms*"` | §3.6, §3.7.1 |
-| A5 | LVMS `Subscription` 채널명과 `LVMCluster` API 버전 | `oc get packagemanifest lvms-operator -o jsonpath='{.status.channels[*].name}'`, `oc explain lvmcluster` | §3.8.1 |
-| A6 | MongoDB 버전 — `--mirror-mongo` 기본값 vs `--mirror-mongo-v7` 중 카탈로그 `v9-260625-amd64`에 맞는 것 | `mas mirror-images` 대화형 모드로 확인 | §2.3 |
-| A7 | NFS 프로비저너에 SCC(`hostmount-anyuid`) 부여가 실제로 필요한지 | 배포 후 Pod 상태 | §3.8.2 |
+**원인**: 두 컨테이너가 같은 디렉터리를 각자 `-v ...:Z`(대문자, 배타적 라벨)로 마운트해서 MCS 카테고리가 충돌. 나중에 시작한 컨테이너가 재라벨링하면 먼저 실행 중인 컨테이너의 접근 권한이 무효화됩니다.
 
-**B. 공식 문서 원문을 브라우저로 직접 확인해야 하는 것**
-
-| # | 항목 | 비고 |
-|---|---|---|
-| B1 | **Manage + Maximo IT 배포 절차 전반** (§3.10) — 이 문서에서 검증 수준이 가장 낮음 | 버전 호환성, 한국어 **Db2 VARGRAPHIC**, 언어/Server Bundle, 권한 동기화 |
-| B2 | **Maximo IT AppPoints 권한** — 라이선스 파일 보유가 IT 권한 보유를 의미하지 않음 | MAS Entitlement와 Maximo IT Entitlement가 **각각** 필요 |
-| B3 | Manage가 내부 Image Registry를 쓰는지, 별도 Registry 지정이 가능한지 | §3.8.3의 용량 산정에 영향 |
-| B4 | SNO에서 PTR(역방향) DNS가 필수인지 권장인지 | §3.2 |
-
-**C. 구조적·운영 리스크 (기술 오류는 아니지만 의사결정 필요)**
-
-| # | 항목 |
-|---|---|
-| C1 | **`mirror registry for Red Hat OpenShift`는 OCP 설치용 소규모·비HA Registry** — MAS 전체 이미지의 장기 운영 Registry로 쓰는 것은 지원 범위를 벗어남. 현 구성은 PoC 용도로 보고 운영 전환 시 Quay/Harbor 등 운영급 Registry 검토 |
-| C2 | **Bastion이 Mirror Registry + DNS + NTP + NFS를 모두 겸함** → 단일 장애점이며 MAS 런타임이 Bastion 가동에 의존. 운영 전환 시 NFS·Registry 분리 검토 |
-| C3 | **NFS 동적 프로비저너는 커뮤니티 프로젝트** — Red Hat/IBM 공식 지원 대상 아님 |
-| C4 | 사이트 Bastion 디스크 — 실측 기준 **500GB 이상, 안전하게 1TB 권장**(§2.1). 반입 데이터 + Registry 사본을 동시 보관하므로 미러 총량의 약 2배 필요 |
-
-**D. 절차는 추가했으나 아직 실제 실행 검증은 안 된 것**
-
-§3.2(DNS·NTP), §3.5(Registry Push), §3.6(SNO 설치·Pull Secret 병합), §3.7(CatalogSource·airgap), §3.8(스토리지·내부 Registry) — 모두 공식 문서 근거로 작성했으나 **이 배포에서 아직 실행하지 않았습니다.** 실행하며 확인된 내용으로 갱신하세요.
-
-### 4.2 ✅ 검증 완료된 항목
-
-| 항목 | 결과 | 근거 |
-|---|---|---|
-| `oc-mirror`를 별도로 준비해야 하는가 | **불필요** — `mas mirror-redhat-images`가 내부적으로 `oc mirror --v2`를 호출하는 래퍼이며 `oc`/`oc-mirror`는 MAS CLI 이미지에 내장 | 실행 로그 (§1.2) |
-| CLI 플래그 철자 | `--pullsecret`(o), `--release`(o, `--ocp-release` 아님) | `--help` 출력 |
-| `--mirror-icd`의 의미 | **Maximo IT 자체** (MongoDB 아님 — MongoDB는 `--mirror-mongo`) | `--help` 원문 |
-| `to-filesystem` 모드의 `-H/-P/-u/-p` | **필수** (없으면 `--help`만 출력하고 종료) | 실행 결과 (§2.3) |
-| `to-filesystem`에 더미 Registry를 쓰면 산출물이 오염되는가 | **오염되지 않음, 재미러링 불필요** — 해당 manifest 목적지가 `file:///`이고 디스크 레이아웃도 경로 기반 | 실측 (§5.3) |
-| `from-filesystem`의 `-c`/`-C` 필요 여부 | **필요** (`--release` 계열은 `to-filesystem` 전용) | GitHub 원본 |
-| MAS 스토리지 요구사항 | **RWO와 RWX 각각 필요** ("both a ReadWriteMany and a ReadWriteOnce capable storage class") — "둘 다 지원하는 클래스 하나"는 오류였음 | 공식 install 가이드 |
-| `mas configure-airgap`의 역할 | Registry 검증 + 전역 Pull Secret + IDMS + CA 신뢰 + MCP 롤아웃. **Red Hat Operator CatalogSource는 생성하지 않음** | 공식 configure-airgap 가이드 |
-| DNS 요구사항 | `api.*`, `api-int.*`(api와 동일 IP), `*.apps.*` 필수 — **누락 시 SNO 설치가 완료되지 않음** | Red Hat Agent-based Installer 문서 |
-| 실측 용량 | Stage1 15GB / Stage2 25GB / Stage4 43GB (참고치와 항목별로 크게 다름 — 외삽 불가) | 직접 측정 (§2.1) |
-| `:Z` vs `:z` SELinux | 병렬 실행 시 **`:z` 필수** | AVC 로그 (§5.1) |
-| 미러링 재시도 전략 | 네트워크 오류면 **비우지 말고 재실행**이 빠름 | 실측 (§5.2) |
-| NFS 프로비저너 자산 | 이미지 `v4.0.2` 유효(`linux/amd64`, 43MB), SA·Deployment 이름 `nfs-client-provisioner`, StorageClass `nfs-client`, NFS 주소/경로가 **4곳**에 중복 | 실제 다운로드·확인 |
-
-## 5. 실제 실행 중 발견된 이슈와 해결 (트러블슈팅 기록)
-
-### 5.1 `:Z` vs `:z` SELinux 라벨 충돌 (확인됨, 2026-07-29)
-
-**증상**: §2.3의 8번(Red Hat 콘텐츠 미러링)과 9번(MAS 콘텐츠 미러링)을 여러 터미널에서 동시에 실행하면, 둘 다 또는 하나가 로그 파일 쓰기 단계에서 `Permission denied`로 실패한다.
-
-**원인**: 두 컨테이너가 같은 상위 디렉터리(`$LOCAL_DIR` = `~/mas-install/mirror`)를 각자 `-v ...:Z`(대문자, 해당 컨테이너 전용 배타적 SELinux 라벨)로 마운트했기 때문. `:Z`는 마운트 시 전체 트리를 그 컨테이너만 접근 가능한 고유 MCS 카테고리로 재라벨링하므로, 두 번째 컨테이너가 시작되며 같은 트리를 자기 것으로 다시 라벨링하면 첫 번째 컨테이너의 접근 권한이 무효화된다.
-
-**확인 방법**:
 ```bash
-getenforce  # Enforcing 확인
 sudo grep avc /var/log/audit/audit.log | tail -30
 ```
-실제로 다음과 같은 AVC 거부 로그로 확정했다.
 ```
-avc: denied { write } for ... path="/mnt/registry/core/logs/mirror-...-core.log" ...
-  scontext=system_u:system_r:container_t:s0:c280,c427
-  tcontext=system_u:object_r:container_file_t:s0:c285,c450
+avc: denied { write } for ... scontext=...:s0:c280,c427  tcontext=...:s0:c285,c450
 ```
-(scontext와 tcontext의 MCS 카테고리 번호가 다름 — 서로 다른 컨테이너가 부여한 라벨이 충돌한 증거)
 
-**해결**: 여러 컨테이너가 같은 호스트 디렉터리를 동시에 접근할 때는 `:Z` 대신 **`:z`(소문자, 공유 라벨)**를 사용한다. 이 문서의 모든 `podman run` 명령은 이미 `:z`로 수정되어 있다. `:z`는 여러 컨테이너가 같은 콘텐츠를 공유해서 쓸 수 있게 라벨링하므로 병렬 실행에 안전하다.
+**해결**: `:Z` 대신 **`:z`**(소문자, 공유 라벨)를 사용합니다. 이 문서의 모든 `podman run`은 `:z`로 되어 있습니다.
 
-**교훈**: §2.3의 8번과 9번을 병렬로 실행할 계획이라면 반드시 `:z`를 사용해야 하며, 만약 순차 실행(하나씩만 실행)한다면 `:Z`/`:z` 어느 쪽을 써도 문제되지 않는다.
+### 4.2 MAS 콘텐츠 미러링 중 `cp.icr.io` OAuth 토큰 타임아웃
 
-### 5.2 Stage 2(Manage+Maximo IT) 미러링 중 `cp.icr.io` OAuth 토큰 타임아웃 (확인됨, 2026-07-29)
+**증상**: `mas mirror-images` 실행 중 `Fail if mirror is not successful` 태스크에서 실패. 로그에 아래 에러.
 
-**증상**: `mas mirror-images --mirror-manage --mirror-icd` 실행 1시간 17분 만에(23GB 수신) `ibm-mas-manage : Fail if mirror is not successful` 태스크에서 실패.
-
-**원인**: ansible 로그의 "Debug mirror command" 태스크 출력 마지막 부분에서 실제 에러 확인.
 ```
 error: unable to push cp.icr.io/cp/manage/aip-optimizer: failed to retrieve blob ...:
-Get "https://cp.icr.io/oauth/token?...": net/http: request canceled (Client.Timeout exceeded while awaiting headers)
-info: Mirroring completed in 1h17m50.61s (5.088MB/s)
-error: one or more errors occurred while uploading images
+Get "https://cp.icr.io/oauth/token?...": net/http: request canceled (Client.Timeout exceeded)
 ```
-거의 다 받은 상태(23GB)에서 IBM 레지스트리(`cp.icr.io`)의 OAuth 토큰 발급 요청이 일시적으로 타임아웃난 것 — 네트워크 일시 문제로 추정. `oc image mirror`는 이미지 하나라도 실패하면 `mirror_images` 역할이 전체를 실패로 처리한다(oc-mirror v2와 달리 부분 실패를 넘어가지 않음).
 
-**해결**: 이미 받은 23GB는 로컬 파일(`~/mas-install/mirror/apps/v2`)에 그대로 남아있고, `oc image mirror`는 재실행 시 이미 있는 콘텐츠를 다시 받지 않고 건너뛴다. 따라서 **디렉터리를 비우지 말고 동일한 Stage 2 명령을 그대로 재실행**하면 실패했던 이미지만 다시 받아 훨씬 빨리 끝난다.
+**원인**: IBM 레지스트리의 OAuth 토큰 발급이 일시적으로 타임아웃. `oc image mirror`는 이미지 하나라도 실패하면 전체를 실패로 처리합니다.
 
-**교훈**: `mas mirror-images` 실패 시 항상 디렉터리를 비우고 처음부터 재시도할 필요는 없다 — 로그에서 실패 원인이 SELinux/권한 문제(§5.1)인지 단순 네트워크 타임아웃인지 먼저 확인하고, 후자라면 비우지 않고 재시도하는 것이 훨씬 빠르다.
+**해결**: 받은 콘텐츠는 `mirror/<stage>/v2`에 남아 있고 재실행 시 건너뜁니다. **디렉터리를 비우지 말고 같은 명령을 다시 실행**하세요.
 
-### 5.3 `to-filesystem`에 더미 Registry 주소를 쓴 것이 산출물에 영향을 주는가 (검증됨, 2026-07-30)
+### 4.3 Red Hat 콘텐츠 미러링 — 타임아웃과 캐시 소실
 
-**배경**: §2.3의 9번에서 `-H/-P/-u/-p`가 `to-filesystem` 모드에서도 필수임을 발견하고, "이 단계는 로컬 파일로 저장하는 것이니 접속 정보는 안 쓰일 것"이라 **추론**해 더미값(`localhost`/`443`/`dummy`/`dummy`)으로 4개 Stage(약 85GB)를 모두 미러링했다. 이후 "Registry Host/Port는 목적지 이미지 경로 생성에도 사용되므로 더미값이 산출물을 오염시켰을 수 있다"는 지적을 받아 실증 검증을 수행했다.
+**증상**: 약 1.5시간 지점부터 `rhoai`(OpenShift AI)의 대용량 이미지에서 반복 실패하고 `rc=4`로 종료. 이미지 하나가 실패하면 해당 Operator 번들 전체가 스킵됩니다.
 
-**검증 결과 — 산출물은 오염되지 않았다. 재미러링 불필요.**
+```
+error: copying image 1/1 from manifest list: writing blob:
+Patch "http://localhost:55000/v2/rhoai/odh-.../blobs/uploads/...": context deadline exceeded
+```
 
-`mas mirror-images`는 모드별로 manifest를 3개 생성하고, 목적지 표기가 서로 다르다.
+**원인 1 — 타임아웃**: `localhost:55000`은 oc-mirror v2의 로컬 캐시 레지스트리입니다. 다운로드가 아니라 **캐시에 쓰는 작업**이 이미지당 기본 타임아웃(10분)을 넘긴 것입니다. 실효 속도 5~9MB/s에서 10분에 처리 가능한 크기는 약 3~5GB인데 rhoai 이미지는 그보다 큽니다.
 
-| manifest | 목적지 표기 | 비고 |
-|---|---|---|
-| `manifests/direct/` | `localhost:443/cp/mas/...` | direct 모드용, 미사용 |
-| `manifests/to-filesystem/` | **`file:///cp/mas/...`** | 실제 사용 — **레지스트리 주소가 들어가지 않음** |
-| `manifests/from-filesystem/` | `localhost:443/...` | §3.5에서 재생성됨 |
+**원인 2 — 캐시 소실**: `--cache-dir` 기본값이 **`$HOME`**(컨테이너 내부)이라, `--rm` 컨테이너가 종료될 때 캐시가 함께 삭제됩니다. 실제로 5시간 미러링이 실패했을 때 산출물은 8.4GB뿐이었고 컨테이너에 쌓인 116GB가 전부 사라졌습니다. Red Hat 공식 절차는 `oc mirror`를 호스트에서 직접 실행하므로 이 문제가 없습니다.
+
+**해결**: §2.3의 8번을 1) imageset 생성 / 2) 미러링으로 분리하고, 2)에서 `oc mirror`를 직접 호출하며 두 옵션을 추가했습니다.
+
+| 옵션 | 목적 |
+|---|---|
+| `--cache-dir /mnt/cache` | 캐시를 호스트 볼륨에 둬 **실패해도 이어받기** |
+| `--image-timeout 60m` | 이미지당 기본 10분 → 60분 |
+
+시작 10분 뒤 호스트 캐시가 커지고 컨테이너 SIZE는 작게 유지되어야 정상입니다.
 
 ```bash
-# 실제로 사용된 to-filesystem manifest — 목적지가 file:///
-head -3 ~/mas-install/mirror/core/manifests/to-filesystem/ibm-mas_9.2.0.txt
-#   cp.icr.io/cp/mas/accapppoints@sha256:...=file:///cp/mas/accapppoints:3.11.74-amd64
-
-# 디스크 레이아웃도 경로 기반 — localhost:443 디렉터리가 없음
-ls ~/mas-install/mirror/core/v2/       # → cp, cpopen
+du -sh ~/mas-install/oc-mirror-cache
+podman ps --size --format "{{.Status}}  SIZE={{.Size}}"
 ```
 
-**원인 분석**: `to-filesystem` 모드에서는 목적지가 `file:///<repo-path>` 형태라 레지스트리 호스트명이 개입하지 않으며, 디스크의 v2 레이아웃도 repo 경로(`cp/mas/...`)로만 키가 잡힌다. `-H/-P`는 인자 검증(파싱) 통과에는 필요하지만 `to-filesystem` 산출물 경로에는 반영되지 않는다. 또한 manifest 파일들은 매 실행 시 CASE 번들에서 재생성되므로(ansible 태스크 `Generate the mirror manifest from the CASE bundle`, `Copy images-mapping-from-filesystem`), `from-filesystem` 실행 시 그때 지정한 실제 Registry 주소로 다시 만들어진다.
+반복 실패하면 `--parallel-images 4`로 동시성을 낮춥니다. `imageset-ocp4.20.yml`에서 `rhods-operator`를 제거하는 방법은 공식 기본 범위를 벗어나므로 최후 수단입니다.
 
-**교훈 및 권장**:
-- 결과적으로 문제는 없었지만, **처음부터 실제 Registry 주소를 넣는 것이 공식 의도**다(공식 가이드는 Stage 0에서 `REGISTRY_HOST` 등을 export해 모든 Stage가 상속하게 함). 이 문서의 명령은 실제 값을 쓰도록 수정했다.
-- 더미값으로 이미 미러링한 경우라도 **§3.5 첫 Stage 실행 직후 `manifests/from-filesystem/`에 `localhost`가 남아있지 않은지 반드시 확인**하라(§3.5의 확인 절차 참고).
-- 일반 교훈: "안 쓰일 것"이라는 추론으로 대량 작업을 시작하지 말고, 소량으로 먼저 산출물을 검증한 뒤 진행하라.
+**부작용 — 불완전한 `working-dir`**
+
+1)에서 래퍼를 중단하면 반쯤 만들어진 `working-dir`이 남고, 2)가 이를 기존 작업으로 인식해 실패한다.
+
+```
+failed to find release image in index: ... release-images/ocp-release/4.20.30-x86_64/index.json: no such file or directory
+```
+
+1) 마지막에 `rm -rf ~/mas-install/mirror/redhat/working-dir ~/mas-install/mirror/redhat/logs`를 실행해 `config.json`과 `imageset-ocp4.20.yml` 두 개만 남겨야 한다. 단 **2)가 실패해 재시도하는 경우에는 `working-dir`을 지우지 않는다** — 그때는 oc-mirror가 스스로 만든 정상 상태다.
+
+### 4.4 SSH 접속을 끊으면 미러링 컨테이너가 죽음
+
+**증상**: 백그라운드로 띄운 미러링이 접속을 끊은 시점에 중단. 로그가 이미지 복사 도중 끊기고 마지막 줄이 아래와 같다.
+
+```
+container not running: No such process
+```
+
+`podman ps`에 컨테이너가 없고, OOM 기록(`dmesg | grep -i "killed process"`)도 없다.
+
+**원인**: rootless podman 컨테이너는 사용자 세션에 속한다. `nohup`/`disown`은 SIGHUP만 막고, `systemd-logind`가 **마지막 세션 종료 시 user slice를 정리**하는 것은 막지 못한다.
+
+```bash
+loginctl show-user maximo | grep -i linger     # Linger=no 면 이 원인
+```
+
+**해결**: `linger`를 켜면 세션과 무관하게 사용자 프로세스가 유지된다. 켠 뒤 같은 명령을 재실행하면 캐시에서 이어받는다.
+
+```bash
+sudo loginctl enable-linger maximo
+loginctl show-user maximo | grep -i linger     # Linger=yes
+```
+
+### 4.5 `from-filesystem`이 tar를 못 찾음 — 파일명 불일치
+
+**증상**: §3.5의 Red Hat 콘텐츠 push가 tar 파일을 찾지 못해 실패.
+
+**원인**: IBM CLI 23.4.1의 `mirror_ocp` 역할이 아래처럼 파일명을 하드코딩하고 있습니다.
+
+```
+--from file://{{ mirror_working_dir }}/mirror_seq1_000000.tar
+```
+
+그런데 같은 이미지에 내장된 oc-mirror(4.22.0)는 산출물을 **`mirror_000001.tar`** 로 만듭니다. 래퍼로만 진행해도 to-filesystem과 from-filesystem의 파일명이 어긋나므로 **IBM CLI 자체의 버전 불일치**입니다.
+
+`to-filesystem.yml`은 파일명을 전혀 다루지 않고 `oc mirror`를 그대로 호출합니다. 즉 산출물 이름은 oc-mirror가 정하며, 두 역할이 서로 어긋나 있는 것입니다.
+
+**해결**: §3.5의 2)에서 파일명을 바꿉니다. **§2.5의 체크섬 검증을 마친 뒤에** 하세요 — 먼저 바꾸면 `transfer-files.sha256`과 어긋납니다.
+
+```bash
+cd ~/mas-install/mirror/redhat
+mv mirror_000001.tar mirror_seq1_000000.tar
+```
+
+역할 파일을 고쳐 쓰는 방법도 있습니다(폐쇄망에서도 가능). 다만 §3.5를 실행할 때마다 마운트를 붙여야 해서 이름을 바꾸는 편이 간단합니다.
+
+```bash
+R=/opt/app-root/lib64/python3.12/site-packages/ansible_collections/ibm/mas_devops/roles/mirror_ocp/tasks/actions/from-filesystem.yml
+podman run --rm quay.io/ibmmas/cli:23.4.1 cat $R > ~/from-filesystem.yml
+sed -i 's|mirror_seq1_000000.tar|mirror_000001.tar|' ~/from-filesystem.yml
+# 이후 podman run 에 -v ~/from-filesystem.yml:$R:ro,z 추가
+```
+
+**참고** — 역할이 실제로 실행하는 명령입니다. 래퍼를 우회할 때 그대로 쓰면 됩니다.
+
+```
+DOCKER_CONFIG=<dir> oc mirror --remove-signatures -c <dir>/imageset-ocp4.20.yml \
+  --dest-tls-verify=false --parallel-images=1 \
+  --from file://<dir>/mirror_seq1_000000.tar docker://<registry> --v2
+```

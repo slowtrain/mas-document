@@ -60,14 +60,47 @@ SNO(Single Node OpenShift)는 컨트롤 플레인과 워커 역할을 단일 노
 
 | 구분 | OS / 상태 | CPU | RAM | 디스크 | 비고 |
 |------|-----------|-----|-----|--------|------|
-| 인터넷 연결 서버 | RHEL 9.6 x86_64 | 4 core 이상 | 16 GB 이상 | **500GB~1TB 권장** (⚠️ 아래 참고) | 파일 다운로드, MAS CLI로 이미지 세트 생성 |
+| 인터넷 연결 서버 | RHEL 9.6 x86_64 | 4 core 이상 | 16 GB 이상 | **500GB 이상** | 파일 다운로드, MAS CLI로 이미지 세트 생성 |
 | 전달 매체 (필요시) | Windows/USB/외장디스크 등 | - | - | 전체 전송 파일 크기 이상 | 사이트 간 물리적 이동이 필요한 경우만 |
-| Bastion | RHEL 9.6 | 4 core 이상 | 16 GB 이상 | **최소 1TB, 권장 2TB** (⚠️ 아래 참고) | Podman, oc CLI, MAS CLI, Mirror Registry |
-| SNO 노드 | 빈 VM 또는 물리 서버 | IBM sizing으로 확정 | IBM sizing으로 확정 | OS와 애플리케이션 데이터 분리 산정 | Agent ISO로 RHCOS+OpenShift 설치 |
+| **Bastion** | RHEL 9.6 | **8 core 권장**(최소 4) | **최소 16GB, 권장 32GB** | **1TB 이상** | Podman, oc CLI, MAS CLI, Mirror Registry, DNS/NTP, **NFS(RWX)** |
+| SNO 노드 | 빈 VM 또는 물리 서버 | 16 core 이상 | 64GB 이상 | **OS용 + LVMS용 빈 디스크 별도 필요** | Agent ISO로 RHCOS+OpenShift 설치 |
 
-⚠️ **실측 기반 정정 (2026-07-29)**: 기존에는 "인터넷 연결 서버 500GB, Bastion Registry 2TB"가 참고치였으나, 실제로 MAS 9.2(`v9-260625-amd64`) 이미지 세트를 미러링해본 결과 공식 참고 수치(MAS 8.10 기준)보다 실제 용량이 **3배 이상** 크게 나오는 것으로 확인됐습니다(예: Core+Catalog 참고치 4GB → 실측 15GB). 전체 미러 데이터가 500~600GB를 넘을 수 있으므로, Bastion은 반입 데이터 + Registry 저장분(사실상 중복 보관)까지 고려해 **최소 1TB, 여유 있게 2TB**를 목표로 합니다. 자세한 근거는 [OFFLINE_INSTALL.md §2.8](OFFLINE_INSTALL.md)을 참고하세요.
+### Bastion 사양 근거
+
+**Red Hat 공식 — Mirror Registry 단독 최소**: *"a single RHEL 8 (x86_64) system with **2 vCPUs and 8GB of RAM**, podman ≥ 3.3 and sufficient disk space"*
+
+이 값은 **Registry만 돌릴 때**의 최소치입니다. 이번 구성의 Bastion은 아래를 모두 겸하므로 상향이 필요합니다.
+
+| 겸하는 역할 | 부하 |
+|---|---|
+| Mirror Registry (Quay) | 공식 최소가 이미 8GB |
+| **NFS 서버 (MAS RWX)** | 🔴 **MAS 런타임 내내** I/O 발생. 성능이 page cache에 의존하므로 메모리 부족 시 MAS 전체가 느려짐 |
+| DNS(dnsmasq) / NTP(chrony) | 미미 |
+| MAS CLI 컨테이너 | 중간 |
+| 이미지 Push 구간 | 디스크 읽기 + Quay 쓰기가 동일 머신에서 동시 발생 |
+
+→ **RAM 16GB가 실질 최소, 32GB 권장.** CPU 4 core는 느릴 뿐이지만 메모리 부족은 런타임 성능 문제로 직결됩니다.
+
+### 디스크 산정 근거 (실측, 2026-07-30)
+
+이전 개정본의 "500~600GB 이상" 추정은 **Stage 1의 초과 배수를 전체에 외삽한 오류**였습니다. 항목별 실측은 다음과 같습니다.
+
+| 구성 | 참고치(MAS 8.10) | 실측 |
+|---|---|---|
+| Core + Catalog | ~4GB | 15GB |
+| Manage + Maximo IT | ~8GB | 25GB |
+| Mongo/TSM/SLS/CFS/Db2 | ~96GB | **43GB** (참고치보다 작음) |
+| CLI | — | ~4GB |
+| Red Hat 콘텐츠 | 약 80GB | 120~150GB 예상 (측정 중) |
+| **합계** | | **약 210~250GB** |
+
+Bastion은 이 데이터를 **두 벌 보관**합니다 — ① 반입한 미러 파일, ② Mirror Registry에 Push된 사본. 여기에 NFS(RWX) 영역과 OS까지 더해 **1TB 이상**을 권장합니다.
+
+> 참고: Red Hat 공식 문서 기준 OCP 릴리스 1개 미러링은 약 12GB, **Operator 카탈로그 전체는 350GB 이상**입니다. 우리 수치가 그보다 작은 것은 MAS가 필요한 Operator만 필터링하기 때문입니다.
 
 Bastion은 설치 작업 서버이므로 RHEL 계열을 권장합니다. SNO 노드는 사전에 RHEL을 설치하는 서버가 아니라, 빈 VM 또는 물리 서버를 ISO로 부팅하여 RHCOS(Red Hat CoreOS)와 OpenShift를 설치하는 대상입니다.
+
+🔴 **SNO 디스크 주의**: LVM Storage(RWO StorageClass)는 **OS가 설치되지 않은 빈 디스크**를 요구합니다. OS용과 별도로 데이터용 디스크를 반드시 할당하세요.
 
 ---
 
