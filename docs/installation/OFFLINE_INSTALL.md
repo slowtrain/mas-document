@@ -75,7 +75,7 @@ IBM MAS CLI 공식 문서(`ibm-mas.github.io/cli`)와 Red Hat OpenShift 공식 �
     - [3.7.6 실행 — ISO 생성](#376-실행--iso-생성)
     - [3.7.7 실행 — SNO 부팅](#377-실행--sno-부팅)
     - [3.7.8 확인 및 검증](#378-확인-및-검증)
-  - [3.8 Airgap 구성 (사용자 계정)](#38-airgap-구성-사용자-계정)
+  - [3.8 Airgap(폐쇄망) 구성 (사용자 계정)](#38-airgap폐쇄망-구성-사용자-계정)
     - [3.8.1 oc-mirror 생성 리소스 적용 + OperatorHub 기본 소스 비활성화](#381-oc-mirror-생성-리소스-적용--operatorhub-기본-소스-비활성화)
     - [3.8.2 mas configure-airgap 실행](#382-mas-configure-airgap-실행)
   - [3.9 스토리지 준비 (RWO + RWX StorageClass) (사용자 계정)](#39-스토리지-준비-rwo--rwx-storageclass-사용자-계정)
@@ -100,6 +100,7 @@ IBM MAS CLI 공식 문서(`ibm-mas.github.io/cli`)와 Red Hat OpenShift 공식 �
   - [4.6 `install-config.yaml` 검증 실패 — `imageDigestSources`](#46-install-configyaml-검증-실패--imagedigestsources)
 
 </details>
+
 
 
 
@@ -1582,7 +1583,7 @@ tr '\r' '\n' < ~/mas-install/mirror/redhat-push.nohup.log | grep -aiE 'error|fai
 ls -la ~/mas-install/mirror/redhat/working-dir/cluster-resources/
 ```
 
-🔴 `cluster-resources/`는 **§3.8 airgap 구성에서 그대로 씁니다.** §2.3 8번에서 비어 있던 이유가 이것입니다 — 목적지 Registry를 알아야 만들 수 있습니다.
+🔴 `cluster-resources/`는 **§3.8 Airgap(폐쇄망) 구성에서 그대로 씁니다.** §2.3 8번에서 비어 있던 이유가 이것입니다 — 목적지 Registry를 알아야 만들 수 있습니다.
 
 | 파일 | 용도 |
 |---|---|
@@ -2189,9 +2190,15 @@ oc get idms
 cat ~/ocp-sno/auth/kubeadmin-password
 ```
 
-### 3.8 Airgap 구성 (사용자 계정)
+### 3.8 Airgap(폐쇄망) 구성 (사용자 계정)
 
-이 단계는 **두 부분**으로 나뉩니다. 순서를 반드시 지키세요.
+기본 상태의 OpenShift는 이미지를 `registry.redhat.io`·`quay.io`에서, OperatorHub 카탈로그를 `registry.redhat.io/redhat/redhat-operator-index`에서 가져옵니다. **이 참조를 전부 미러 Registry로 돌려놓는 단계**입니다. IBM CLI 명령 이름(`mas configure-airgap`)을 따라 Airgap 구성이라 부릅니다.
+
+§3.7에서는 부트스트랩용 release 미러 2건만 넣었습니다. 나머지 오퍼레이터 미러 32건과 CatalogSource를 여기서 적용합니다.
+
+이 단계 전에는 외부 이미지를 참조하는 명령이 모두 실패합니다 — `oc debug node/...`가 대표적입니다.
+
+**두 부분으로 나뉘며 순서를 반드시 지키세요.** 둘 다 MachineConfig 롤아웃(노드 재부팅)을 유발하므로 합쳐서 30~60분 걸립니다.
 
 #### 3.8.1 oc-mirror 생성 리소스 적용 + OperatorHub 기본 소스 비활성화
 
@@ -2646,7 +2653,7 @@ oc auth can-i '*' '*' --all-namespaces     # yes 여야 함
 | DB | 데이터베이스 | **내장 Db2 자동 프로비저닝 선택** |
 | 기타 | Pod QoS 등 | 기본값 권장 |
 
-클러스터에 airgap용 `ImageDigestMirrorSet`이 이미 있으면 `mas install`이 이를 감지해 폐쇄망 설치 흐름으로 자동 전환됩니다.
+클러스터에 Airgap(폐쇄망)용 `ImageDigestMirrorSet`이 이미 있으면 `mas install`이 이를 감지해 폐쇄망 설치 흐름으로 자동 전환됩니다.
 
 > `mas install`은 마지막에 **동일 설치를 재현할 수 있는 비대화형 명령**을 출력합니다. 재설치·다른 사이트 배포를 위해 **반드시 보관**하세요(비밀번호는 마스킹 후).
 
