@@ -58,6 +58,15 @@
 | 300GB | RHCOS(OS) 설치 — `install-config.yaml`의 `rootDeviceHints` 대상 |
 | 500GB | **빈 상태로 유지** → LVM Storage(LVMS)가 RWO StorageClass(`lvms-vg1`)로 사용 |
 
+**VM 사전 설정** (vSphere, 전원 끈 상태에서)
+
+| 항목 | 값 | 이유 |
+|---|---|---|
+| `disk.EnableUUID` (구성 매개변수) | `TRUE` | 없으면 Agent Installer 검증 `vsphere-disk-uuid-enabled` 실패 |
+| 네트워크 어댑터 | VMXNET3, **전원을 켤 때 연결** | 끊겨 있으면 설치 진행 불가 |
+| MAC 주소 | **수동** 고정 | `agent-config.yaml`이 MAC으로 호스트를 식별 |
+| 포트그룹 | Bastion과 동일 (`vmnet0`) | DNS·Registry 도달 |
+
 ⚠️ 500GB 디스크에 파티션이나 파일시스템이 있으면 LVMS가 사용하지 못합니다. SNO 설치 시 OS가 300GB에만 설치되도록 `rootDeviceHints`를 정확히 지정하세요. 실제 디바이스명(`/dev/sda`, `/dev/sdb` 등)은 SNO 부팅 후 확인합니다.
 
 ---
@@ -100,15 +109,34 @@
 | 관리자 | `init` / `T3AgRHSeYw6x5u0Z2q4OE9s81Koyd7tV` |
 | 설정 위치 | `/home/maximo/quay-install` |
 | 이미지 저장소 | `/home/maximo/mirror-registry/quay` |
-| 읽기 전용 계정 | ⬜ 미생성 — §3.6에서 OCP 노드에 배포할 pull-only 계정 |
+| 서비스 관리 | `systemctl --user status quay-app` (rootless, `maximo` 계정) |
 
-INFO[2026-08-05 18:26:42] Quay installed successfully, config data is stored in /home/maximo/quay-install
-INFO[2026-08-05 18:26:42] Quay is available at https://registry.mas-it.itmsg.co.kr:8443 with credentials (init, T3AgRHSeYw6x5u0Z2q4OE9s81Koyd7tV)
+읽기 전용 계정은 만들지 않았습니다. oc-mirror v2가 업스트림 네임스페이스를 그대로 재현해 Organization이 31개가 되었고, Quay Robot은 소속 Organization 안에서만 권한을 받아 자격증명 하나로 덮을 수 없기 때문입니다. **클러스터 pull secret에도 `init`을 사용합니다** — 폐쇄망 내부 전용 전제. 설치 후 좁히려면 전역 pull secret만 교체하면 됩니다.
 
-설치 시 `mas mirror-images`에 넘긴 `REGISTRY_USERNAME`은 `masadmin`이었습니다. 목적지 경로 생성에만 쓰였고 실제 Quay 계정과는 무관합니다 — §3.5 push에는 위 `init` 계정을 씁니다.
+### OpenShift SNO — 2026-08-06 설치
+
+| 항목 | 값 |
+|---|---|
+| API | `https://api.mas-it.itmsg.co.kr:6443` |
+| 콘솔 | `https://console-openshift-console.apps.mas-it.itmsg.co.kr` |
+| 관리자 | `kubeadmin` / `oRYob-UVjUs-AI492-mjDsc` |
+| `kubeconfig` | `/home/maximo/ocp-sno/auth/kubeconfig` |
+| 비밀번호 파일 | `/home/maximo/ocp-sno/auth/kubeadmin-password` |
+| 설정 백업 | `/home/maximo/ocp-sno-backup/` |
+
+노트북에서 콘솔에 접속하려면 `hosts`에 개별 이름을 넣어야 합니다 — `*.apps` 와일드카드는 hosts 파일이 지원하지 않습니다.
+
+```
+192.168.2.210    registry.mas-it.itmsg.co.kr
+192.168.2.211    console-openshift-console.apps.mas-it.itmsg.co.kr
+192.168.2.211    oauth-openshift.apps.mas-it.itmsg.co.kr
+```
+
+로그인 시 OAuth로 리다이렉트되므로 `oauth-openshift` 항목도 필요합니다.
 
 ### SSH 키
 
 | 항목 | 값 |
 |---|---|
 | `~/.ssh/quay_installer` | `mirror-registry install`이 요구하는 키. 2026-08-05 생성, `authorized_keys`에 등록됨 |
+| SNO 노드 접속 | `ssh -i ~/.ssh/quay_installer core@192.168.2.211` — `install-config.yaml`의 `sshKey`로 같은 키를 사용 |
