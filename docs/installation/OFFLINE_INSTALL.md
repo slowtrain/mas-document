@@ -81,16 +81,23 @@ IBM MAS CLI 공식 문서(`ibm-mas.github.io/cli`)와 Red Hat OpenShift 공식 �
   - [3.9 스토리지 준비 (RWO + RWX StorageClass) (사용자 계정)](#39-스토리지-준비-rwo--rwx-storageclass-사용자-계정)
     - [3.9.1 RWO — LVM Storage (LVMS) Operator](#391-rwo--lvm-storage-lvms-operator)
     - [3.9.2 RWX — 방식 선택](#392-rwx--방식-선택)
-    - [3.9.3 OpenShift 내부 Image Registry 구성](#393-openshift-내부-image-registry-구성)
-    - [3.9.4 스토리지 검증 — PVC 바인딩 + 쓰기 테스트](#394-스토리지-검증--pvc-바인딩--쓰기-테스트)
-  - [3.10 MAS Core 설치 (사용자 계정)](#310-mas-core-설치-사용자-계정)
-    - [3.10.1 실행](#3101-실행)
-    - [3.10.2 확인 및 검증](#3102-확인-및-검증)
-  - [3.11 Manage + Maximo IT 배포·활성화 (웹 UI, Suite Administration 관리자 계정)](#311-manage--maximo-it-배포활성화-웹-ui-suite-administration-관리자-계정)
-    - [3.11.1 실행 — 기본 흐름](#3111-실행--기본-흐름)
-    - [3.11.2 확인 및 검증](#3112-확인-및-검증)
+    - [3.9.3 스토리지 검증 — PVC 바인딩 + 쓰기 테스트](#393-스토리지-검증--pvc-바인딩--쓰기-테스트)
+    - [3.9.4 OpenShift 내부 Image Registry 구성](#394-openshift-내부-image-registry-구성)
+  - [3.10 MAS 설치 — Core + Manage + Maximo IT (사용자 계정)](#310-mas-설치--core--manage--maximo-it-사용자-계정)
+    - [3.10.1 실행 — 사전 준비](#3101-실행--사전-준비)
+    - [3.10.2 실행 — mas install](#3102-실행--mas-install)
+    - [3.10.3 실행 — 비대화형 (권장)](#3103-실행--비대화형-권장)
+    - [3.10.4 확인 및 검증](#3104-확인-및-검증)
+    - [3.10.5 실패 시 초기화 — Manage 재설치](#3105-실패-시-초기화--manage-재설치)
+  - [3.11 Manage + Maximo IT 확인 (웹 UI)](#311-manage--maximo-it-확인-웹-ui)
+    - [3.11.1 확인 및 검증](#3111-확인-및-검증)
+    - [3.11.2 웹 UI 확인](#3112-웹-ui-확인)
+    - [3.11.3 설치 후 작업](#3113-설치-후-작업)
   - [3.12 설치 후 확인 (사용자 계정)](#312-설치-후-확인-사용자-계정)
-    - [3.12.1 확인 및 검증](#3121-확인-및-검증)
+    - [3.12.1 실행 — 접속용 `hosts` 등록 (검증용)](#3121-실행--접속용-hosts-등록-검증용)
+    - [3.12.2 운영 전환 — DNS와 인증서](#3122-운영-전환--dns와-인증서)
+    - [3.12.3 확인 및 검증](#3123-확인-및-검증)
+    - [3.12.4 노드 종료·재시작 절차](#3124-노드-종료재시작-절차)
 - [4. 트러블슈팅](#4-트러블슈팅)
   - [4.1 `:Z` vs `:z` SELinux 라벨 충돌](#41-z-vs-z-selinux-라벨-충돌)
   - [4.2 MAS 콘텐츠 미러링 중 `cp.icr.io` OAuth 토큰 타임아웃](#42-mas-콘텐츠-미러링-중-cpicrio-oauth-토큰-타임아웃)
@@ -98,8 +105,20 @@ IBM MAS CLI 공식 문서(`ibm-mas.github.io/cli`)와 Red Hat OpenShift 공식 �
   - [4.4 SSH 접속을 끊으면 미러링 컨테이너가 죽음](#44-ssh-접속을-끊으면-미러링-컨테이너가-죽음)
   - [4.5 `mas mirror-redhat-images --mode from-filesystem` 을 쓰지 않는 이유](#45-mas-mirror-redhat-images---mode-from-filesystem-을-쓰지-않는-이유)
   - [4.6 `install-config.yaml` 검증 실패 — `imageDigestSources`](#46-install-configyaml-검증-실패--imagedigestsources)
+  - [4.7 MCO가 `registries.conf`를 렌더링하지 못함 — `conflicting mirrorSourcePolicy`](#47-mco가-registriesconf를-렌더링하지-못함--conflicting-mirrorsourcepolicy)
 
 </details>
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -681,7 +700,7 @@ watch -n 10 'du -sh ~/mas-install/mirror/apps; ps aux | grep -c "[m]as mirror-im
 tr '\r' '\n' < ~/mas-install/mirror/stage-apps.nohup.log | grep -aE '\[SUCCESS\]|\[FAILURE\]'
 ```
 
-검증 : 🔴 **Maximo IT는 상태 목록에 나오지 않습니다** — Manage 확장이라 Manage 매니페스트에 포함됩니다. `extension-icd`가 있어야 §3.11에서 활성화할 수 있으므로 직접 확인하세요.
+검증 : 🔴 **Maximo IT는 상태 목록에 나오지 않습니다** — Manage 확장이라 Manage 매니페스트에 포함됩니다. `extension-icd`가 있어야 §3.10에서 `--manage-components "base=latest,icd=latest"` 로 설치할 수 있으므로 직접 확인하세요.
 
 ```bash
 ls ~/mas-install/mirror/apps/v2/cp/manage/ | grep -i icd
@@ -2202,40 +2221,97 @@ cat ~/ocp-sno/auth/kubeadmin-password
 
 #### 3.8.1 oc-mirror 생성 리소스 적용 + OperatorHub 기본 소스 비활성화
 
-🔴 `mas configure-airgap`은 **Red Hat Operator용 CatalogSource를 생성하지 않습니다.** 이 단계를 건너뛰면 cert-manager / DRO / Grafana 등 MAS 필수 Operator를 설치할 수 없어 §3.10이 실패합니다.
+이 단계를 건너뛰면 cert-manager / DRO / Grafana 등 MAS 필수 Operator를 설치할 수 없어 §3.10이 실패합니다.
 
-⚠️ **미검증** — IBM 설치 가이드는 `mas configure-airgap --setup-redhat-catalogs`를 안내하는데 커맨드 레퍼런스의 옵션 목록에는 없습니다. 실제 도움말로 먼저 확인하세요. 플래그가 있으면 §3.8.2에서 추가해 한 번에 처리하고 아래를 생략할 수 있습니다.
+> `mas configure-airgap`에는 `--setup-redhat-catalogs`·`--setup-redhat-release` 플래그가 있어 같은 일을 대신할 수 있습니다. **쓰지 않습니다** — IBM CLI가 만드는 IDMS·CatalogSource는 일반형인데, 우리 미러는 `oc mirror`가 만든 실제 레이아웃(prefix 없이 `registry:8443/openshift4`, `/rhel9` …)을 따릅니다. `cluster-resources/`는 그 미러링 결과에서 생성돼 경로가 정확히 일치하고, 이것이 Red Hat 공식 절차이기도 합니다.
+
+**1) 실행 — 환경변수**
 
 ```bash
-podman run --rm quay.io/ibmmas/cli:23.4.1 mas configure-airgap --help
+export KUBECONFIG=~/ocp-sno/auth/kubeconfig
+export REGISTRY_HOST=registry.mas-it.itmsg.co.kr
+export REGISTRY_PORT=8443
+export REGISTRY_USERNAME=init
+export REGISTRY_PASSWORD='T3AgRHSeYw6x5u0Z2q4OE9s81Koyd7tV'
+export REGISTRY_CA="$(find "$HOME/quay-install" -name rootCA.pem -type f -print -quit)"
+
+oc whoami && echo "CA $REGISTRY_CA"
 ```
 
-**1) 실행**
+**2) 실행 — 리소스 적용**
+
+적용 전에 CatalogSource가 가리키는 경로가 실제 미러 레이아웃과 맞는지 확인합니다. `spec.image`가 `registry.<cluster-name>.<base-domain>:8443/redhat/redhat-operator-index:v4.20` 형태여야 합니다.
+
+```bash
+ls -la ~/mas-install/mirror/redhat/working-dir/cluster-resources/
+cat ~/mas-install/mirror/redhat/working-dir/cluster-resources/cs-redhat-operator-index-v4-20.yaml
+```
 
 ```bash
 # 기본 OperatorHub 소스(인터넷 대상) 비활성화
 oc patch OperatorHub cluster --type json \
   -p '[{"op": "add", "path": "/spec/disableAllDefaultSources", "value": true}]'
 
-# oc-mirror가 생성한 IDMS/ITMS/CatalogSource 적용 (내용 먼저 검토)
-ls -la ~/mas-install/mirror/redhat/working-dir/cluster-resources/
 oc apply -f ~/mas-install/mirror/redhat/working-dir/cluster-resources/
 ```
 
-IDMS/ITMS 적용은 **MachineConfig 롤아웃(노드 재시작)** 을 유발합니다. 안정화 후 다음으로 넘어가세요.
+> `cc-*.yaml`은 ClusterCatalog(OLM v1)입니다. CRD가 없는 버전이면 그 세 개만 실패하고 나머지는 정상 적용됩니다.
 
-**2) 확인 및 검증**
+IDMS/ITMS 적용은 **MachineConfig 롤아웃(노드 재시작)** 을 유발합니다. SNO는 노드가 하나라 그동안 API가 끊깁니다 — 정상입니다.
+
+진행 확인 : `master` MCP의 `CONFIG` 이름이 새로 바뀌고 `UPDATED=True`, `DEGRADED=False` 가 되어야 합니다
 
 ```bash
-watch oc get mcp          # UPDATING=False, DEGRADED=False 될 때까지
+watch -n 30 'date; oc get mcp; echo; oc get nodes'
+```
 
-oc get nodes
+⚠️ `UPDATING=True` 를 못 볼 수도 있습니다. SNO에서는 1~2분 만에 끝나기도 해서, 지켜보기 시작했을 때 이미 완료돼 있는 경우가 있습니다. **완료 판정은 `CONFIG` 이름이 방금 만들어진 것인지로 하세요.**
+
+```bash
+oc get mc --sort-by=.metadata.creationTimestamp | tail -3   # AGE가 방금인 rendered-master-*
+oc get co machine-config                                     # AVAILABLE=True, PROGRESSING=False
+```
+
+**3) 확인 및 검증**
+
+검증 : 노드의 `registries.conf`에 미러가 반영돼야 합니다. IDMS 33건 + ITMS 1건 = **34**
+
+```bash
+ssh -i ~/.ssh/quay_installer core@<sno-ip> 'sudo grep -c "^\[\[registry\]\]" /etc/containers/registries.conf'
+```
+
+여기서 `0`이면 롤아웃이 아직 안 된 것입니다. 오브젝트 자체는 2건(`idms-release-0`, `idms-operator-0`)으로 보입니다 — 그 안에 항목이 33개 들어 있습니다.
+
+```bash
 oc get imagedigestmirrorset
 oc get imagetagmirrorset
-oc get catalogsource -n openshift-marketplace          # 모두 READY
+```
 
-# MAS가 요구하는 Red Hat Operator 조회
+검증 : CatalogSource Pod 3개가 `Running` 이어야 합니다
+
+```bash
+oc get catalogsource -n openshift-marketplace
+oc get pods -n openshift-marketplace
+```
+
+`DISPLAY`·`PUBLISHER`가 비어 있는 것은 정상입니다 — oc-mirror가 그 필드를 넣지 않습니다. Pod이 `ImagePullBackOff`면 인덱스 이미지가 Registry에 없거나 경로가 어긋난 것입니다.
+
+```bash
+oc logs -n openshift-marketplace -l olm.catalogSource=cs-redhat-operator-index-v4-20 --tail=30
+```
+
+검증 : MAS가 요구하는 Red Hat Operator가 조회되어야 합니다
+
+```bash
 oc get packagemanifest -n openshift-marketplace | grep -E 'cert-manager|grafana|ibm-data-reporter|ibm-metrics|lvms'
+```
+
+다섯 개가 모두 나와야 합니다. 전체 개수가 30개 미만인 것은 정상입니다 — imageset에서 고른 것만 미러링했으므로 전체 카탈로그가 아닙니다.
+
+검증 : 외부 이미지가 미러를 통해 당겨지는지 — §3.7.8에서 실패했던 `oc debug`가 이제 동작해야 합니다
+
+```bash
+oc debug node/mas-it-sno -- chroot /host lsblk -o NAME,SIZE,HCTL,TYPE,FSTYPE,MOUNTPOINT
 ```
 
 > IBM Maximo Operator Catalog는 이 시점에 **없는 것이 정상**입니다 — §3.10의 `mas install`이 생성합니다.
@@ -2244,47 +2320,184 @@ oc get packagemanifest -n openshift-marketplace | grep -E 'cert-manager|grafana|
 
 Registry 접근 검증, 전역 Pull Secret, IDMS, 사용자 CA 신뢰를 구성합니다. MachineConfig 롤아웃으로 30~60분 걸릴 수 있습니다.
 
-**1) 실행**
+**1) 실행 — 환경변수**
+
+§3.6.1과 같습니다. 셸이 바뀌었으면 다시 설정하세요.
 
 ```bash
-REGISTRY_CA="$(find "$HOME/quay-install" -name rootCA.pem -type f -print -quit)"
-read -s REGISTRY_PASSWORD
-export REGISTRY_PASSWORD
+export KUBECONFIG=~/ocp-sno/auth/kubeconfig
+export REGISTRY_HOST=registry.mas-it.itmsg.co.kr
+export REGISTRY_PORT=8443
+export REGISTRY_USERNAME=init
+export REGISTRY_PASSWORD='T3AgRHSeYw6x5u0Z2q4OE9s81Koyd7tV'
+export REGISTRY_CA="$(find "$HOME/quay-install" -name rootCA.pem -type f -print -quit)"
 
-podman run -ti --rm \
-  -e REGISTRY_PASSWORD \
-  -v "$REGISTRY_CA":/mnt/registry-ca.pem:ro,z \
-  quay.io/ibmmas/cli:23.4.1 bash -c "
-    oc login --token=<ocp-token> --server=https://api.mas-it.itmsg.co.kr:6443 &&
-    mas configure-airgap \
-      -H registry.mas-it.itmsg.co.kr -P 8443 \
-      -u masadmin -p \"\$REGISTRY_PASSWORD\" \
-      --ca-file /mnt/registry-ca.pem \
-      --no-confirm
-  "
-unset REGISTRY_PASSWORD
+echo "$REGISTRY_HOST:$REGISTRY_PORT / $REGISTRY_USERNAME / 비밀번호 ${#REGISTRY_PASSWORD}자 / CA $REGISTRY_CA"
 ```
 
-**2) 확인 및 검증**
+**2) 실행 — 도움말 확인**
+
+CLI는 클러스터에 로그인돼 있지 않으면 `--help`조차 출력하지 않습니다. **kubeconfig를 컨테이너에 물려줍니다** — 문서에 흔히 나오는 `oc login --token=<token>` 방식보다 낫습니다. 토큰을 따로 뽑을 필요가 없고 만료도 없습니다.
 
 ```bash
-watch oc get mcp                    # 롤아웃 완료 대기
+podman run --rm --network host \
+  -v "$KUBECONFIG":/tmp/kubeconfig:ro,z \
+  -e KUBECONFIG=/tmp/kubeconfig \
+  quay.io/ibmmas/cli:23.4.1 mas configure-airgap --help
+```
 
+옵션 목록에 **`--setup-redhat-catalogs`** 가 있는지 확인하세요. 있으면 §3.8.1의 CatalogSource 적용을 이 명령이 대신할 수 있습니다.
+
+**3) 실행 — configure-airgap**
+
+```bash
+nohup podman run --rm --network host \
+  -v "$KUBECONFIG":/tmp/kubeconfig:ro,z \
+  -v "$REGISTRY_CA":/mnt/registry-ca.pem:ro,z \
+  -e KUBECONFIG=/tmp/kubeconfig \
+  quay.io/ibmmas/cli:23.4.1 mas configure-airgap \
+    -H "$REGISTRY_HOST" -P "$REGISTRY_PORT" \
+    -u "$REGISTRY_USERNAME" -p "$REGISTRY_PASSWORD" \
+    --ca-file /mnt/registry-ca.pem \
+    --no-confirm > "$HOME/mas-install/configure-airgap.log" 2>&1 &
+
+disown
+```
+
+`--network host`가 필요한 이유는 §3.6.4와 같습니다 — 컨테이너 기본 네트워크에서는 Bastion의 resolv.conf(`127.0.0.1`)로 이름을 해석할 수 없습니다.
+
+진행 확인 : 프로세스가 `1`이어야 함. `0`이면 끝난 것입니다
+
+```bash
+watch -n 15 'date; ps aux | grep -c "[c]onfigure-airgap"; echo; tail -5 ~/mas-install/configure-airgap.log; echo; oc get mcp 2>&1 | tail -2'
+```
+
+MachineConfig 롤아웃으로 노드가 재부팅하면 `oc`가 잠시 실패합니다 — 정상입니다.
+
+**4) 실행 — IDMS 정책 충돌 해소**
+
+🔴 **반드시 실행해야 합니다.** §3.8.1의 `idms-operator-0`(oc-mirror 생성)와 §3.8.2의 `mas-ibm-catalog`(configure-airgap 생성)가 **같은 source `icr.io/cpopen`에 다른 `mirrorSourcePolicy`** 를 지정합니다.
+
+| IDMS | `icr.io/cpopen` 정책 |
+|---|---|
+| `idms-operator-0` | 기본값 (`AllowContactingSource`) |
+| `mas-ibm-catalog` | `NeverContactSource` |
+
+충돌하면 MCO가 **registries.conf 전체 렌더링을 중단**해서 `mas-ibm-catalog`의 매핑이 하나도 반영되지 않습니다(§4.7). 오브젝트는 정상으로 보이고 `oc get mcp`도 `UPDATED=True`라 그냥 넘어가기 쉽습니다.
+
+```bash
+IDX=$(oc get idms idms-operator-0 -o json | \
+  jq -r '.spec.imageDigestMirrors | to_entries[] | select(.value.source=="icr.io/cpopen") | .key')
+echo "index=$IDX"
+
+oc patch idms idms-operator-0 --type=json \
+  -p "[{\"op\":\"add\",\"path\":\"/spec/imageDigestMirrors/$IDX/mirrorSourcePolicy\",\"value\":\"NeverContactSource\"}]"
+```
+
+검증 : 충돌이 더 남아 있지 않아야 합니다. **다른 source에서 또 날 수 있습니다**
+
+```bash
+oc logs -n openshift-machine-config-operator deploy/machine-config-controller --tail=20 | grep -i conflicting
+```
+
+출력이 있으면 그 source 이름으로 위 patch를 한 번 더 실행하세요 (`select(.value.source=="<source>")`).
+
+출력이 없으면 새 `rendered-master-*`가 생기고 노드가 재부팅됩니다.
+
+```bash
+watch -n 20 'date; oc get mc --sort-by=.metadata.creationTimestamp | tail -2; echo; oc get mcp | head -3'
+```
+
+⚠️ `quay.io/ibmmas` 등 부족해 보이는 매핑을 **IDMS로 따로 만들지 마세요.** `mas-ibm-catalog`에 이미 들어 있어 중복 정의가 되고 같은 충돌을 하나 더 만듭니다.
+
+**5) 확인 및 검증**
+
+🔴 **`oc get mcp`가 `UPDATED=True`인 것만으로는 판정할 수 없습니다.** MCO가 새 설정을 **만들지 못하면** 갱신할 것이 없어 그대로 `UPDATED=True`로 보입니다. 실제로 이번 배포에서 그렇게 통과 판정이 났고, MAS 설치 단계에 가서야 드러났습니다(§4.7).
+
+검증 : 노드의 `registries.conf` 항목이 §3.8.1 때보다 **늘어야** 합니다 (34 → 43)
+
+```bash
+ssh -i ~/.ssh/quay_installer core@<sno-ip> 'grep -c "^\[\[registry\]\]" /etc/containers/registries.conf'
+```
+
+검증 : **새 `rendered-master-*`** 가 생성되어야 합니다 (`AGE`가 방금)
+
+```bash
+oc get mc --sort-by=.metadata.creationTimestamp | tail -2
+oc get mcp
+```
+
+검증 : MCO 컨트롤러에 오류가 없어야 합니다
+
+```bash
+oc logs -n openshift-machine-config-operator deploy/machine-config-controller --tail=20 | grep -i error
+```
+
+`conflicting mirrorSourcePolicy` 오류가 보이면 §4.7로 가세요.
+
+검증 : IDMS에 **`mas-ibm-catalog`** 가 추가돼 있어야 합니다 — 이 명령이 만든 것입니다
+
+```bash
 oc get imagedigestmirrorset
+```
 
-# 전역 Pull Secret에 미러 Registry 항목 추가 확인
+| 이름 | 만든 곳 |
+|---|---|
+| `image-digest-mirror` | §3.7 `install-config.yaml` |
+| `idms-release-0` / `idms-operator-0` | §3.8.1 |
+| `mas-ibm-catalog` | §3.8.2 ← **이번에 생겨야 하는 것** |
+
+검증 : 전역 Pull Secret에 **미러 Registry 항목**이 있어야 합니다
+
+```bash
 oc get secret pull-secret -n openshift-config \
   -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq -r '.auths | keys[]'
-
-# 사용자 CA 신뢰 번들
-oc get configmap -n openshift-config user-ca-bundle -o yaml | head -20
 ```
 
-미러 Registry에서 실제로 Pull이 되는지 최종 확인합니다. `ImagePullBackOff`면 IDMS·Pull Secret·CA 중 하나가 잘못된 것입니다.
+`registry.<cluster-name>.<base-domain>:8443` 이 목록에 나와야 합니다.
+
+검증 : CA 신뢰 번들에 **인증서 본문**이 들어 있어야 합니다
 
 ```bash
-oc run test-pull --image=registry.mas-it.itmsg.co.kr:8443/ibmmas/cli:23.4.1 --restart=Never
+oc get configmap -n openshift-config user-ca-bundle -o yaml | head -5
+```
+
+`ca-bundle.crt:` 아래에 `-----BEGIN CERTIFICATE-----` 가 보이면 정상입니다.
+
+검증 : 미러 Registry에서 실제로 Pull이 되는지 — 이것이 §3.8 전체의 최종 확인입니다
+
+```bash
+oc delete pod test-pull --ignore-not-found
+
+oc run test-pull --image=registry.mas-it.itmsg.co.kr:8443/ibmmas/cli:latest \
+  --restart=Never --command -- sleep 60
+```
+
+```bash
 oc get pod test-pull -w
+```
+
+`Running`이 되면 성공입니다. `ImagePullBackOff`면 원인을 봅니다.
+
+```bash
+oc describe pod test-pull | tail -20
+```
+
+| 메시지 | 원인 |
+|---|---|
+| `manifest unknown` | 경로·태그가 Registry에 없음. 인증·인증서는 정상 |
+| `x509` / `certificate signed by unknown authority` | CA 신뢰 문제 — §3.8.2 재확인 |
+| `401` / `unauthorized` | 전역 Pull Secret 문제 |
+
+`manifest unknown`이면 실제 태그를 매니페스트에서 확인하세요. MAS CLI 이미지는 `:latest`로 올라갑니다.
+
+```bash
+grep -o "$REGISTRY_HOST:$REGISTRY_PORT/[^ ]*" ~/mas-install/mirror/cli/manifests/from-filesystem/*.txt | head
+```
+
+확인 후 정리합니다.
+
+```bash
 oc delete pod test-pull
 ```
 
@@ -2312,13 +2525,24 @@ SNO의 로컬 디스크를 RWO StorageClass로 제공합니다. `lvms-operator`(
 
 **1) 실행 — 사전 확인**
 
-Operator 조회. 안 보이면 §3.8.1의 CatalogSource 적용 상태를 먼저 확인하세요.
+2)와 3)에 넣을 값 세 개를 여기서 확정합니다.
+
+검증 : StorageClass가 아직 없어야 정상입니다
 
 ```bash
-oc get packagemanifest -n openshift-marketplace | grep -i lvms
+oc get sc
 ```
 
-LVMS는 **비어 있는(파티션·파일시스템 없는) 디스크**가 필요합니다. 500GB의 `FSTYPE`/`MOUNTPOINT`가 비어 있는지 확인하고 그 디바이스명을 아래 `deviceSelector.paths`에 씁니다.
+검증 : `lvms-operator`가 조회되어야 합니다. 안 보이면 §3.8.1의 CatalogSource 적용 상태를 먼저 확인하세요
+
+```bash
+oc get packagemanifest lvms-operator -n openshift-marketplace \
+  -o jsonpath='{.status.catalogSource}{"  채널: "}{range .status.channels[*]}{.name}{" "}{end}{"\n"}'
+```
+
+출력된 **CatalogSource 이름**과 **채널**을 2)의 `source`·`channel`에 넣습니다.
+
+검증 : 500GB 디스크의 `FSTYPE`·`MOUNTPOINT`가 비어 있어야 합니다. 그 디바이스명을 3)의 `deviceSelector.paths`에 씁니다
 
 ```bash
 oc debug node/mas-it-sno -- chroot /host lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT
@@ -2352,19 +2576,61 @@ metadata:
 spec:
   installPlanApproval: Automatic
   name: lvms-operator
-  source: <catalogsource-name>
+  source: <1)에서 확인한 CatalogSource 이름>
+  sourceNamespace: openshift-marketplace
+  channel: <1)에서 확인한 채널>
+EOF
+```
+
+예시)
+
+```bash
+cat <<'EOF' | oc apply -f -
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-storage
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-storage-operatorgroup
+  namespace: openshift-storage
+spec:
+  targetNamespaces:
+    - openshift-storage
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: lvms
+  namespace: openshift-storage
+spec:
+  installPlanApproval: Automatic
+  name: lvms-operator
+  source: cs-redhat-operator-index-v4-20
   sourceNamespace: openshift-marketplace
   channel: stable-4.20
 EOF
 ```
 
-> `source`에는 §3.8.1에서 적용된 실제 CatalogSource 이름을 넣습니다 — `oc get catalogsource -n openshift-marketplace`로 확인하세요(`cs-redhat-operator-index` 형태일 수 있습니다).
+검증 : 플레이스홀더가 그대로 들어가지 않았는지 확인합니다
+
+```bash
+oc get sub lvms -n openshift-storage -o custom-columns=SOURCE:.spec.source,CHANNEL:.spec.channel
+```
 
 ```bash
 oc get csv -n openshift-storage -w     # Succeeded 대기
 ```
 
 **3) 실행 — LVMCluster 생성**
+
+검증 : `apiVersion`을 확인합니다. **CRD는 2)의 오퍼레이터가 설치되면서 생기므로 여기서 조회해야 합니다**
+
+```bash
+oc explain lvmcluster | head -3
+```
 
 `deviceSelector.paths`에 1)에서 확인한 빈 디스크를 지정합니다.
 
@@ -2382,7 +2648,7 @@ spec:
         default: true
         deviceSelector:
           paths:
-            - /dev/sdb        # ②에서 확인한 실제 빈 디스크로 교체
+            - /dev/sdb        # 1)에서 확인한 실제 빈 디스크로 교체
         thinPoolConfig:
           name: thin-pool-1
           sizePercent: 90
@@ -2392,8 +2658,6 @@ EOF
 
 oc get lvmcluster -n openshift-storage -w    # Ready 대기
 ```
-
-⚠️ `LVMCluster`의 `apiVersion`(`lvm.topolvm.io/v1alpha1`)은 미검증입니다. 적용 전 `oc explain lvmcluster`로 확인하세요.
 
 **4) 확인 및 검증** — deviceClass 이름이 `vg1`이면 `lvms-vg1`이 생성됩니다.
 
@@ -2431,54 +2695,344 @@ firewall-cmd --reload
 
 > `no_root_squash`는 컨테이너가 root로 쓰기 위해 필요하지만 보안 완화 설정입니다. 사이트 정책에 맞춰 접근 대역을 좁히세요.
 
+검증 : export가 보이고 서비스가 `active`, 방화벽에 `nfs`·`rpc-bind`·`mountd`가 있어야 합니다
+
+```bash
+showmount -e localhost
+systemctl is-active nfs-server
+firewall-cmd --list-services
+```
+
+검증 : SNO에서도 export가 보여야 합니다 — 여기까지 돼야 프로비저너가 마운트할 수 있습니다
+
+```bash
+ssh -i ~/.ssh/quay_installer core@<sno-ip> 'showmount -e <bastion-ip>'
+```
+
 **2) 실행 — 프로비저너 이미지 push** (사용자 계정)
 
 §2.3의 10번에서 받아둔 자산을 사용합니다.
 
 ```bash
 podman load -i ~/mas-install/nfs-provisioner/nfs-subdir-external-provisioner.tar
-
-read -s REGISTRY_PASSWORD
-podman login registry.mas-it.itmsg.co.kr:8443 -u masadmin --password-stdin <<< "$REGISTRY_PASSWORD"
-
-podman tag  registry.k8s.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2 \
-            registry.mas-it.itmsg.co.kr:8443/sig-storage/nfs-subdir-external-provisioner:v4.0.2
-podman push registry.mas-it.itmsg.co.kr:8443/sig-storage/nfs-subdir-external-provisioner:v4.0.2
-
-unset REGISTRY_PASSWORD
 ```
 
-**3) 실행 — YAML 수정 후 배포**
+검증 : `registry.k8s.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2` 가 보여야 합니다
 
-받은 YAML의 기본값: SA·Deployment 이름 `nfs-client-provisioner`, StorageClass `nfs-client`, namespace `default`, NFS 주소·경로가 `env`와 `volumes` **총 4곳에 중복**.
+```bash
+podman images | grep nfs-subdir
+```
+
+```bash
+podman login "$REGISTRY_HOST:$REGISTRY_PORT" -u "$REGISTRY_USERNAME" -p "$REGISTRY_PASSWORD"
+
+podman tag  registry.k8s.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2 \
+            "$REGISTRY_HOST:$REGISTRY_PORT/sig-storage/nfs-subdir-external-provisioner:v4.0.2"
+podman push "$REGISTRY_HOST:$REGISTRY_PORT/sig-storage/nfs-subdir-external-provisioner:v4.0.2"
+```
+
+검증 : Registry에서 다시 받아지는지 확인합니다
+
+```bash
+podman rmi "$REGISTRY_HOST:$REGISTRY_PORT/sig-storage/nfs-subdir-external-provisioner:v4.0.2"
+podman pull "$REGISTRY_HOST:$REGISTRY_PORT/sig-storage/nfs-subdir-external-provisioner:v4.0.2"
+```
+
+**3) 실행 — YAML 작성 후 배포**
+
+받은 YAML은 예제값이 들어 있어 그대로 쓸 수 없습니다. 바꿔야 할 곳은 이렇습니다.
+
+| 파일 | 바꿀 곳 |
+|---|---|
+| `rbac.yaml` | `namespace: default` → 전용 namespace (**5곳**) |
+| `deployment.yaml` | namespace, `image`, `NFS_SERVER`/`NFS_PATH`(env), `server`/`path`(volumes) |
+| `class.yaml` | 없음 — `nfs-client`, provisioner 이름이 deployment의 `PROVISIONER_NAME`과 일치 |
+
+⚠️ NFS 주소·경로가 **`env`와 `volumes` 두 곳에 중복**으로 들어갑니다. 한쪽만 고치면 Pod은 뜨는데 PVC가 엉뚱한 경로에 생깁니다.
+
+🔴 **namespace를 먼저 만드세요.** 없으면 `oc apply`가 `namespaces "nfs-provisioner" not found`로 실패합니다.
 
 ```bash
 cd ~/mas-install/nfs-provisioner
 oc create ns nfs-provisioner
-
-sed -i 's/namespace: default/namespace: nfs-provisioner/g' rbac.yaml deployment.yaml
-sed -i 's/10\.3\.243\.101/192.168.2.210/g'                 deployment.yaml   # NFS 서버 (2곳)
-sed -i 's|/ifs/kubernetes|/export/mas-rwx|g'               deployment.yaml   # NFS 경로 (2곳)
-sed -i 's|registry.k8s.io/sig-storage/|registry.mas-it.itmsg.co.kr:8443/sig-storage/|' deployment.yaml
-
-grep -nE 'namespace:|image:|NFS_SERVER|NFS_PATH|server:|path:' deployment.yaml   # 치환 확인
-
-oc apply -f rbac.yaml -f deployment.yaml -f class.yaml
+oc get ns nfs-provisioner
 ```
 
-**4) 확인 및 검증**
+형식) `rbac.yaml` — `namespace`만 바꿉니다
 
 ```bash
-showmount -e localhost               # /export/mas-rwx 가 보여야 함
-oc get pods -n nfs-provisioner
-oc get storageclass                  # nfs-client 가 보여야 함
+cat > rbac.yaml <<'EOF'
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nfs-client-provisioner
+  namespace: <provisioner-ns>
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: nfs-client-provisioner-runner
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "update", "patch"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: run-nfs-client-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: nfs-client-provisioner
+    namespace: <provisioner-ns>
+roleRef:
+  kind: ClusterRole
+  name: nfs-client-provisioner-runner
+  apiGroup: rbac.authorization.k8s.io
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: leader-locking-nfs-client-provisioner
+  namespace: <provisioner-ns>
+rules:
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: leader-locking-nfs-client-provisioner
+  namespace: <provisioner-ns>
+subjects:
+  - kind: ServiceAccount
+    name: nfs-client-provisioner
+    namespace: <provisioner-ns>
+roleRef:
+  kind: Role
+  name: leader-locking-nfs-client-provisioner
+  apiGroup: rbac.authorization.k8s.io
+EOF
 ```
 
-Pod가 `CrashLoopBackOff`/권한 오류면 SCC를 부여합니다(⚠️ 필요 여부 미검증).
+예시)
+
+```bash
+cat > rbac.yaml <<'EOF'
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nfs-client-provisioner
+  namespace: nfs-provisioner
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: nfs-client-provisioner-runner
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "update", "patch"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: run-nfs-client-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: nfs-client-provisioner
+    namespace: nfs-provisioner
+roleRef:
+  kind: ClusterRole
+  name: nfs-client-provisioner-runner
+  apiGroup: rbac.authorization.k8s.io
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: leader-locking-nfs-client-provisioner
+  namespace: nfs-provisioner
+rules:
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: leader-locking-nfs-client-provisioner
+  namespace: nfs-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: nfs-client-provisioner
+    namespace: nfs-provisioner
+roleRef:
+  kind: Role
+  name: leader-locking-nfs-client-provisioner
+  apiGroup: rbac.authorization.k8s.io
+EOF
+```
+
+형식) `deployment.yaml`
+
+```bash
+cat > deployment.yaml <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfs-client-provisioner
+  labels:
+    app: nfs-client-provisioner
+  namespace: <provisioner-ns>
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nfs-client-provisioner
+  template:
+    metadata:
+      labels:
+        app: nfs-client-provisioner
+    spec:
+      serviceAccountName: nfs-client-provisioner
+      containers:
+        - name: nfs-client-provisioner
+          image: <registry>:8443/sig-storage/nfs-subdir-external-provisioner:v4.0.2
+          volumeMounts:
+            - name: nfs-client-root
+              mountPath: /persistentvolumes
+          env:
+            - name: PROVISIONER_NAME
+              value: k8s-sigs.io/nfs-subdir-external-provisioner
+            - name: NFS_SERVER
+              value: <bastion-ip>
+            - name: NFS_PATH
+              value: <nfs-export-path>
+      volumes:
+        - name: nfs-client-root
+          nfs:
+            server: <bastion-ip>
+            path: <nfs-export-path>
+EOF
+```
+
+예시)
+
+```bash
+cat > deployment.yaml <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfs-client-provisioner
+  labels:
+    app: nfs-client-provisioner
+  namespace: nfs-provisioner
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nfs-client-provisioner
+  template:
+    metadata:
+      labels:
+        app: nfs-client-provisioner
+    spec:
+      serviceAccountName: nfs-client-provisioner
+      containers:
+        - name: nfs-client-provisioner
+          image: registry.mas-it.itmsg.co.kr:8443/sig-storage/nfs-subdir-external-provisioner:v4.0.2
+          volumeMounts:
+            - name: nfs-client-root
+              mountPath: /persistentvolumes
+          env:
+            - name: PROVISIONER_NAME
+              value: k8s-sigs.io/nfs-subdir-external-provisioner
+            - name: NFS_SERVER
+              value: 192.168.2.210
+            - name: NFS_PATH
+              value: /export/mas-rwx
+      volumes:
+        - name: nfs-client-root
+          nfs:
+            server: 192.168.2.210
+            path: /export/mas-rwx
+EOF
+```
+
+검증 : 예제값(`10.3.243.101`, `/ifs/kubernetes`, `registry.k8s.io`, `default`)이 남아 있지 않아야 합니다
+
+```bash
+grep -nE '10\.3\.243\.101|/ifs/kubernetes|registry\.k8s\.io|namespace: default' rbac.yaml deployment.yaml
+```
+
+🔴 **SCC를 먼저 부여해야 합니다.** OpenShift 기본 `restricted` SCC는 **NFS 볼륨을 허용하지 않아** Pod 생성 자체가 거부됩니다.
+
+```
+Error creating: pods "nfs-client-provisioner-..." is forbidden:
+unable to validate against any security context constraint:
+spec.volumes[0]: Invalid value: "nfs": nfs volumes are not allowed to be used
+```
 
 ```bash
 oc adm policy add-scc-to-user hostmount-anyuid -z nfs-client-provisioner -n nfs-provisioner
 ```
+
+배포합니다.
+
+```bash
+oc apply -f rbac.yaml -f deployment.yaml -f class.yaml
+```
+
+> `oc apply` 시 PodSecurity 경고(`would violate PodSecurity "restricted:latest"`)가 나오는 것은 정상입니다 — 경고일 뿐 SCC 부여가 되어 있으면 Pod은 정상 생성됩니다.
+
+**4) 확인 및 검증**
+
+검증 : 프로비저너 Pod이 `1/1 Running` 이어야 합니다. NFS 마운트에 실패하면 여기서 걸립니다
+
+```bash
+oc get pods -n nfs-provisioner
+```
+
+검증 : StorageClass **두 개**가 있어야 합니다 — `lvms-vg1 (default)`(RWO, §3.9.1)와 `nfs-client`(RWX)
+
+```bash
+oc get sc
+```
+
+| 상태 | 원인 |
+|---|---|
+| Pod이 아예 없음 | SCC 미부여 — `oc get events -n nfs-provisioner --sort-by=.lastTimestamp \| tail -5` 로 확인 |
+| `ContainerCreating`에서 멈춤 | NFS 마운트 실패 — Bastion의 export·방화벽, `deployment.yaml`의 `server`/`path` 확인 |
+| `CrashLoopBackOff` | 이미지 또는 RBAC 문제 — `oc logs -n nfs-provisioner deploy/nfs-client-provisioner` |
 
 
 ---
@@ -2499,7 +3053,107 @@ oc get storageclass | grep -i cephfs   # RWX용: ocs-storagecluster-cephfs
 
 ---
 
-#### 3.9.3 OpenShift 내부 Image Registry 구성
+#### 3.9.3 스토리지 검증 — PVC 바인딩 + 쓰기 테스트
+
+`mas install` 전에 두 StorageClass가 실제로 동작하는지 확인합니다.
+
+**1) 실행 — PVC 바인딩**
+
+```bash
+oc create ns storage-test
+
+for M in ReadWriteOnce:lvms-vg1:rwo ReadWriteMany:nfs-client:rwx; do
+  MODE=${M%%:*}; REST=${M#*:}; SC=${REST%%:*}; NAME=${REST##*:}
+  cat <<EOF | oc apply -n storage-test -f -
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-$NAME
+spec:
+  accessModes: [$MODE]
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: $SC
+EOF
+done
+```
+
+```bash
+oc get pvc -n storage-test
+```
+
+검증 : `test-rwx`는 **`Bound`**, `test-rwo`는 **`Pending`** 이 정상입니다
+
+`lvms-vg1`은 `VOLUMEBINDINGMODE=WaitForFirstConsumer`라 Pod이 붙을 때 볼륨이 생성됩니다. `test-rwo`의 `Pending`은 오류가 아니라 2)에서 해소됩니다.
+
+`test-rwx`가 `Pending`이면 그건 문제입니다 — 프로비저너 미동작, NFS export 권한 등을 확인합니다.
+
+```bash
+oc describe pvc -n storage-test test-rwx | tail -10
+oc logs -n nfs-provisioner deploy/nfs-client-provisioner --tail=20
+```
+
+**2) 실행 — 쓰기 테스트**
+
+NFS는 마운트만 되고 쓰기가 실패하는 경우가 흔하므로 반드시 확인합니다. **두 볼륨을 한 Pod에 붙여** RWO·RWX를 함께 검증하고, 동시에 1)에서 `Pending`이던 `test-rwo`도 해소합니다.
+
+이미지는 §3.8.2 Pull 테스트에서 확인된 `ibmmas/cli:latest`를 씁니다.
+
+⚠️ `rhel9/support-tools:latest` 는 쓸 수 없습니다. `oc debug`가 그 이미지를 쓰긴 하지만 **릴리스 페이로드의 다이제스트로 당기는 것**이라, 미러에 `latest` 태그로는 존재하지 않습니다(`repository not found`).
+
+```bash
+oc delete pod test-writer -n storage-test --ignore-not-found
+
+cat <<'EOF' | oc apply -n storage-test -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-writer
+spec:
+  restartPolicy: Never
+  containers:
+    - name: writer
+      image: registry.mas-it.itmsg.co.kr:8443/ibmmas/cli:latest
+      command: ["/bin/sh","-c","echo rwx-ok > /rwx/test.txt && echo rwo-ok > /rwo/test.txt && cat /rwx/test.txt /rwo/test.txt"]
+      volumeMounts:
+        - {name: rwx, mountPath: /rwx}
+        - {name: rwo, mountPath: /rwo}
+  volumes:
+    - name: rwx
+      persistentVolumeClaim: {claimName: test-rwx}
+    - name: rwo
+      persistentVolumeClaim: {claimName: test-rwo}
+EOF
+```
+
+**3) 확인 및 검증**
+
+검증 : PVC **둘 다 `Bound`**, Pod은 `Completed`
+
+```bash
+oc get pvc,pod -n storage-test
+```
+
+검증 : 로그에 `rwx-ok`, `rwo-ok` 두 줄이 나와야 합니다
+
+```bash
+oc logs -n storage-test test-writer
+```
+
+검증 : Bastion의 NFS export에 파일이 실제로 생겨야 합니다
+
+```bash
+ls -R /export/mas-rwx/
+```
+
+정리합니다.
+
+```bash
+oc delete ns storage-test
+```
+
+#### 3.9.4 OpenShift 내부 Image Registry 구성
 
 🔴 `platform: none` 설치에서는 내부 Image Registry가 자동 구성되지 않습니다(`managementState: Removed` 또는 스토리지 없음). Manage는 배포 중 **Admin/Server Bundle 이미지를 직접 빌드해 Push**하므로, 저장할 레지스트리가 없으면 배포가 중단됩니다.
 
@@ -2533,197 +3187,548 @@ oc patch configs.imageregistry.operator.openshift.io cluster --type merge -p \
 
 **2) 확인 및 검증**
 
+검증 : PVC가 `Bound`
+
 ```bash
 oc get pvc -n openshift-image-registry
+```
+
+검증 : `image-registry-*` Pod이 `Running`
+
+```bash
 oc get pods -n openshift-image-registry
-oc get co image-registry     # AVAILABLE=True, DEGRADED=False
 ```
 
-#### 3.9.4 스토리지 검증 — PVC 바인딩 + 쓰기 테스트
-
-`mas install` 전에 두 StorageClass가 실제로 동작하는지 확인합니다.
-
-**1) 실행 — PVC 바인딩**
+검증 : `AVAILABLE=True`, `PROGRESSING=False`, `DEGRADED=False`
 
 ```bash
-oc create ns storage-test
-
-for M in ReadWriteOnce:lvms-vg1:rwo ReadWriteMany:nfs-client:rwx; do
-  MODE=${M%%:*}; REST=${M#*:}; SC=${REST%%:*}; NAME=${REST##*:}
-  cat <<EOF | oc apply -n storage-test -f -
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: test-$NAME
-spec:
-  accessModes: [$MODE]
-  resources:
-    requests:
-      storage: 1Gi
-  storageClassName: $SC
-EOF
-done
-
-oc get pvc -n storage-test        # 둘 다 Bound 여야 함
+oc get co image-registry
 ```
 
-`Pending`이면 원인을 확인합니다 — 프로비저너 미동작, SCC 권한, NFS export 권한 등.
+검증 : `managementState`가 `Managed`로 바뀌고 PVC가 연결돼야 합니다
 
 ```bash
-oc describe pvc -n storage-test test-rwx
+oc get configs.imageregistry.operator.openshift.io cluster \
+  -o jsonpath='{.spec.managementState}{"\n"}{.spec.storage}{"\n"}'
 ```
 
-**2) 실행 — 쓰기 테스트**
+### 3.10 MAS 설치 — Core + Manage + Maximo IT (사용자 계정)
 
-NFS는 마운트만 되고 쓰기가 실패하는 경우가 흔하므로 반드시 확인합니다. 이미지 경로는 미러 Registry에 실제 존재하는 것으로 교체하세요(`curl -sk -u <user> https://<registry>:8443/v2/_catalog`).
+#### 3.10.1 실행 — 사전 준비
+
+**1) 실행 — 설정 디렉터리 생성**
+
+`mas install`이 JDBC 설정 파일을 여기에 만듭니다. 미리 만들어 두지 않으면 podman이 root 소유로 생성해 쓰기가 막힙니다.
 
 ```bash
-cat <<'EOF' | oc apply -n storage-test -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: test-writer
-spec:
-  restartPolicy: Never
-  containers:
-    - name: writer
-      image: registry.mas-it.itmsg.co.kr:8443/openshift4/ose-tools-rhel9:latest
-      command: ["/bin/sh","-c","echo ok > /data/test.txt && cat /data/test.txt"]
-      volumeMounts: [{name: data, mountPath: /data}]
-  volumes:
-    - name: data
-      persistentVolumeClaim: {claimName: test-rwx}
-EOF
+mkdir -p ~/mas-install/mas-config
 ```
 
-**3) 확인 및 검증**
+**2) 확인 및 검증**
+
+검증 : `cluster-admin` 권한이 있어야 합니다 — `yes`
 
 ```bash
-oc logs -n storage-test test-writer -f      # ok 출력되면 정상
-ls -la /export/mas-rwx/                     # Bastion에서 파일 생성 확인
-
-oc delete ns storage-test                   # 정리
+export KUBECONFIG=~/ocp-sno/auth/kubeconfig
+oc auth can-i '*' '*' --all-namespaces
 ```
 
-### 3.10 MAS Core 설치 (사용자 계정)
-
-#### 3.10.1 실행
+검증 : 라이선스 파일과 Entitlement Key가 있어야 합니다
 
 ```bash
+ls -la ~/mas-install/licenses/
+```
+
+검증 : StorageClass가 **RWO·RWX 두 개** 있어야 합니다 (§3.9.1, §3.9.2)
+
+```bash
+oc get sc
+```
+
+검증 : 내부 Image Registry가 **`Managed`** 여야 합니다 (§3.9.4). `Removed`면 Manage 이미지 빌드가 실패합니다
+
+```bash
+oc get co image-registry
+oc get configs.imageregistry.operator.openshift.io cluster \
+  -o jsonpath='{.spec.managementState}{"\n"}'
+```
+
+검증 : 폐쇄망 미러 매핑이 **노드에 반영**돼 있어야 합니다 (§3.8.2). 오브젝트 존재만으로는 부족합니다
+
+```bash
+ssh -i ~/.ssh/quay_installer core@<sno-ip> 'grep -c "^\[\[registry\]\]" /etc/containers/registries.conf'
+oc logs -n openshift-machine-config-operator deploy/machine-config-controller --tail=20 | grep -i conflicting
+```
+
+`conflicting` 출력이 있으면 §3.8.2의 4)를 먼저 처리하세요.
+
+검증 : 미러 Registry에서 CLI 이미지를 받을 수 있어야 합니다
+
+```bash
+export REGISTRY=registry.mas-it.itmsg.co.kr:8443
+podman pull "$REGISTRY/ibmmas/cli:latest"
+```
+
+#### 3.10.2 실행 — mas install
+
+라이선스 디렉터리와 kubeconfig를 마운트합니다. 대화형이라 `-ti`가 필요합니다.
+
+```bash
+mkdir -p ~/mas-install/mas-config
+
 export IBM_ENTITLEMENT_KEY=$(cat ~/mas-install/licenses/entitlement_key.key)
 
-podman run -ti --rm \
-  -v "$HOME":/mnt/home:z \
-  quay.io/ibmmas/cli:23.4.1 bash -c "
-    oc login --token=<ocp-token> --server=https://api.mas-it.itmsg.co.kr:6443 &&
-    mas install
-  "
-unset IBM_ENTITLEMENT_KEY
+podman run -ti --rm --network host \
+  -v "$HOME/mas-install/licenses":/mnt/licenses:ro,z \
+  -v "$HOME/mas-install/mas-config":/mnt/config:z \
+  -v "$KUBECONFIG":/tmp/kubeconfig:ro,z \
+  -e KUBECONFIG=/tmp/kubeconfig \
+  -e IBM_ENTITLEMENT_KEY \
+  quay.io/ibmmas/cli:23.4.1 mas install
 ```
 
-**사전 조건**: `oc login`에 사용하는 계정은 **`cluster-admin` 권한**이 있어야 합니다.
+`Select Local configuration directory` 프롬프트에는 **`/mnt/config`** 를 입력합니다. `mas install`이 설치 설정을 파일로 남기는데, 쓰기 가능한 호스트 디렉터리를 마운트해두지 않으면 `--rm`과 함께 사라집니다. 라이선스 디렉터리는 `:ro`라 쓸 수 없습니다.
+
+⚠️ `$HOME`을 통째로 마운트하지 마세요 — SELinux가 홈 디렉터리 재라벨링을 거부합니다.
+
+```
+Error: SELinux relabeling of /home/maximo is not allowed
+```
+
+`oc login --token=<token>` 방식보다 낫습니다 — 토큰을 뽑을 필요도, 만료도 없습니다(§3.8.2와 동일).
+
+⚠️ **SSH가 끊기면 중단됩니다.** 대화형이라 `nohup`을 쓸 수 없으므로 `tmux`나 `screen` 안에서 실행하는 것을 권합니다.
 
 ```bash
-oc auth can-i '*' '*' --all-namespaces     # yes 여야 함
+tmux new -s masinstall
 ```
 
-**대화형 입력 항목** (공식 install 가이드 흐름 순서 기준). 실제 프롬프트는 CLI 버전에 따라 순서·문구가 다를 수 있으니 화면을 읽으며 진행하세요.
+**대화형 입력 — 실제 프롬프트 순서** (CLI 23.4.1 실측)
 
-| 구분 | 항목 | 이번 배포 값 / 판단 기준 |
+| # | 프롬프트 | 입력 | 이유 |
+|---|---|---|---|
+| 1 | `Set Target OpenShift Cluster` — `Proceed with this cluster?` | `y` | kubeconfig 마운트로 이미 연결됨 |
+| 2 | `Choose Install Mode` — `Show advanced installation options?` | **`n`** (Simplified) | 아래 참고 |
+| 3 | `IBM Maximo Operator Catalog Selection` | **`v9-260625-amd64`** | §2.3에서 미러링한 카탈로그. 다른 것을 고르면 이미지가 없어 실패 |
+| 3-1 | `Select release` | **`9.2`** | `9.2-feature`가 아닙니다. feature 릴리스는 다음 GA까지만 지원되는 평가판이고, §2.3에서 채널 `9.2.x`로 미러링했습니다 |
+| 4 | `License Terms` — `Do you accept the license terms?` | `y` | `MAS92` / **`MAXIT92`** / `MAXESRI92` 세 건 제시 |
+| 5 | `Configure Storage Class Usage` — `Use the auto-detected storage classes?` | **`n`** | 자동 감지가 RWO도 `nfs-client`로 잡음 |
+| 5-1 | Storage class (ReadWriteOnce) | **`lvms-vg1`** | NFS를 RWO로 쓰면 Db2·MongoDB 성능이 떨어집니다 |
+| 5-2 | Storage class (ReadWriteMany) | **`nfs-client`** | |
+| 6 | `Configure AppPoint Licensing` — `License file` | **`/mnt/licenses/<라이선스 파일>`** | 호스트 경로가 아니라 **컨테이너 안 경로** |
+| 6-1 | `Contact e-mail address` / `first name` / `last name` | 담당자 정보 | SLS 등록 정보 |
+| 7 | `Configure MAS Superuser Account` — Username / Password | 계정/비밀번호 | 초기 구성과 관리자 계정 생성에만 사용. **비대화형 실행에서는 묻지 않고 랜덤 생성**됩니다(§3.10.3) |
+| 8 | `Configure IBM Container Registry` — `IBM entitlement key` | 키 붙여넣기 | `cat ~/mas-install/licenses/entitlement_key.key` |
+| 8-1 | `Warning: IBM entitlement key validation failed` | **`2` (Continue anyway)** | 🔴 폐쇄망에서는 **정상**입니다. CLI가 `cp.icr.io`로 키를 검증하려 하는데 나갈 수 없습니다. 키는 §2.3 미러링에서 이미 검증됐고 여기서는 Pull Secret 구성에만 쓰입니다 |
+| 9 | `Configure Operational Mode` | **`2` (Non-Production)** | 🔴 설치 후 변경 불가 |
+| 10 | `Application Selection` | **Manage만 `y`** | IoT·Monitor·Optimizer·Visual Inspection·Facilities·AI Service·Assist는 모두 `n`. §2.3에서 Manage만 미러링했으므로 다른 것을 고르면 이미지가 없어 실패 |
+| 11.1 | `Maximo Manage Components` — `Select components to enable?` | **`y`** | 🔴 기본값은 **Health만** 켜집니다. `n`으로 두면 **Maximo IT가 빠집니다** |
+| 11.1-1 | 컴포넌트 목록 | **`Maximo IT`만 `y`** | 나머지 전부 `n` — ACM, Aviation, Civil Infrastructure, Envizi, Health, HSE, Nuclear, Oil & Gas, Oracle/SAP Connector, Service Provider, Spatial, Strategize, Transportation, Tririga, Utilities, Workday, AIP, Collaborate |
+| 11.2 | `Maximo IT License Terms` | `y` | 이 화면이 나오면 **Maximo IT가 제대로 선택된 것**입니다. ⚠️ CLI가 안내하는 링크는 `MAXIT81-License`(8.1)로 오래된 것이며, 실제 조건은 4)의 `MAXIT92-License` |
+| 11.3 | `Maximo Manage Settings - Customization` — `Include customization archive?` | `n` | 신규 설치라 커스터마이징 아카이브가 없습니다 |
+| — | `Maximo Manage Settings - Database` | **나오지 않음** | 13.1에서 `n`(외부 DB)을 고를 때만 표시됩니다. 전용 Db2로 가면 `maximo` / `maxdata` / `maxindex` 기본값이 자동 적용되고, 한국어 저장에 필요한 `db2Vargraphic: true`도 자동으로 켜집니다 |
+| 12 | `Configure MongoDb` — `Create MongoDb cluster using MongoDb CE Operator?` | `y` | §2.3에서 `--mirror-mongo`로 확보. 기존 MongoDB 없음 |
+| 13.1 | `Database Configuration for Maximo Manage` — `Create Manage dedicated Db2 instance using the IBM Db2 Universal Operator?` | 🔴 **`y`** | 아래 참고 |
+| 13.1-1 | `Db2 License file` | **Enter (빈 값)** | Db2 v12부터 라이선스 활성화 키를 묻지만, MAS에 포함되어 제공되므로 별도 파일이 없습니다. 화면에도 "없으면 Enter로 계속"이라고 안내합니다 |
+| 13.2 | `Configure Db2 instance?` | `y` → 기본값 | 화면에는 CPU 4000m·볼륨 425Gi로 보이지만 **실제로는 `server-bundle-size: dev` 기준(CPU 300m, 볼륨 합계 60Gi)이 적용**됩니다. SNO에는 이쪽이 적합하며 `lvms-vg1`이 확장 가능이라 나중에 늘릴 수 있습니다 |
+| 13.2-1 | `Set node affinity/tolerations?` | `n` | SNO는 노드가 하나 |
+| 13.2-2 | `Set database in HADR mode?` | `n` | primary/standby 두 벌이 같은 노드에 올라가 자원만 두 배 소모 |
+| — | `Select Local configuration directory` | **`/mnt/config`** | 쓰기 가능한 마운트여야 합니다 |
+| 14 | `Maximo AI Configuration` — `Do you want to configure AiCfg?` | `n` | AI Service를 설치하지 않았고 관련 이미지도 미러링 대상이 아닙니다 |
+| — | `Install Grafana?` | `y` | §2.3 8번에 `grafana-operator` 포함. MAS Core 표준 구성 |
+| 15 | `Advanced Settings` — `Configure Guided Tour?` | `n` | 기본값 유지 |
+| 15-1 | `Set Manage Server Timezone?` | `y` → `Asia/Seoul` | ⚠️ 실측에서 이 입력이 **반영되지 않고** `GMT`로 설치됐습니다. §3.10.3의 `--manage-server-timezone` 으로 넘기는 것이 확실합니다 |
+| 15-2 | `Use additional configurations?` | `n` | 추가로 적용할 YAML이 없습니다 |
+| 16 | `Non-Interactive Install Command` | — | 🔴 **출력되는 명령을 반드시 보관하세요.** 재설치·다른 사이트 배포에 그대로 씁니다 |
+| 17 | `Review Settings` — `Proceed with these settings?` | `y` | 아래 확인 항목 참고 |
+| 18 | `Disconnected OpenShift Preparation` — `Enter quay.io/ibmmas/cli:23.4.1 image digest` | 다이제스트 | 폐쇄망이라 CLI가 `quay.io`에서 조회하지 못합니다 |
+
+🔴 **18번 다이제스트를 손으로 붙여넣으면 공백이 섞여 파이프라인이 즉시 실패합니다.** §3.10.3의 `--use-cli-digest` 방식을 쓰세요.
+
+**대화형은 언어·데모 데이터·타임존을 묻지 않거나 반영하지 않습니다.** 이 셋이 필요하면 §3.10.3의 비대화형 실행을 쓰세요 — 나중에 추가하려면 이미지 재빌드나 DB 재생성이 필요합니다.
+
+#### 3.10.3 실행 — 비대화형 (권장)
+
+**신규 설치·재설치 모두 이 방식을 권장합니다.** 프롬프트 20여 개를 입력할 필요가 없고, 대화형이 묻지 않는 언어·데모 데이터·타임존까지 한 번에 지정하며, 다이제스트를 `--use-cli-digest`로 넘겨 붙여넣기 공백 사고를 막습니다. 대화형(§3.10.2)은 화면 흐름을 확인할 때만 참고하세요.
+
+사전 조건은 §3.10.1과 동일합니다 — `cluster-admin` 권한, 라이선스 파일, `~/mas-install/mas-config` 디렉터리.
+
+실패한 PipelineRun이 있으면 먼저 지웁니다.
+
+```bash
+oc get pipelinerun -n mas-inst1-pipelines
+oc delete pipelinerun <이름> -n mas-inst1-pipelines
+```
+
+🔴 **다이제스트는 미러에 있는 값을 써야 합니다.** `quay.io` 원본 이미지의 다이제스트와 다릅니다 — `mas mirror-images`가 push하면서 매니페스트를 다시 만들기 때문입니다. 원본 값을 쓰면 IDMS가 미러로 보내줘도 `manifest unknown`이 납니다.
+
+```bash
+export REGISTRY=registry.mas-it.itmsg.co.kr:8443
+export IBM_ENTITLEMENT_KEY=$(cat ~/mas-install/licenses/entitlement_key.key)
+
+podman pull "$REGISTRY/ibmmas/cli:latest"
+export CLI_DIGEST=$(podman image inspect "$REGISTRY/ibmmas/cli:latest" \
+  --format '{{index .RepoDigests 0}}' | cut -d@ -f2)
+```
+
+검증 : 공백이 없어야 합니다 — 대괄호가 바로 붙어야 정상
+
+```bash
+echo "[$CLI_DIGEST]"
+```
+
+예시)
+
+```bash
+podman run -ti --rm --network host \
+  -v "$HOME/mas-install/licenses":/mnt/licenses:ro,z \
+  -v "$HOME/mas-install/mas-config":/mnt/config:z \
+  -v "$KUBECONFIG":/tmp/kubeconfig:ro,z \
+  -e KUBECONFIG=/tmp/kubeconfig \
+  -e IBM_ENTITLEMENT_KEY \
+  quay.io/ibmmas/cli:23.4.1 \
+  mas install --mas-catalog-version v9-260625-amd64 --ibm-entitlement-key "$IBM_ENTITLEMENT_KEY" \
+    --mas-channel 9.2.x --mas-instance-id inst1 --mas-workspace-id ws1 --mas-workspace-name "Maximo IT" \
+    --non-prod --admin-mode cluster --routing subdomain --servicemesh false \
+    --mas-issuer-kind ClusterIssuer \
+    --storage-class-rwo lvms-vg1 --storage-class-rwx nfs-client \
+    --storage-pipeline lvms-vg1 --storage-accessmode ReadWriteOnce \
+    --license-file /mnt/licenses/lincense_poc.dat \
+    --contact-email bsw78@itmsg.co.kr --contact-firstname seungwoo --contact-lastname baek \
+    --mongodb-namespace mongoce \
+    --manage-channel 9.2.x --manage-jdbc workspace-application \
+    --manage-components "base=latest,icd=latest" --manage-server-bundle-size dev \
+    --manage-base-language EN --manage-secondary-languages "KO" \
+    --manage-demodata \
+    --manage-server-timezone Asia/Seoul \
+    --db2-manage --db2-channel v120104.0 --db2-namespace db2u --db2-type db2wh \
+    --db2-timezone Asia/Seoul \
+    --db2-cpu-requests 300m --db2-cpu-limits 6000m \
+    --db2-memory-requests 8Gi --db2-memory-limits 12Gi \
+    --db2-backup-storage 10Gi --db2-data-storage 20Gi \
+    --db2-logs-storage 10Gi --db2-meta-storage 10Gi --db2-temp-storage 10Gi \
+    --use-cli-digest "$CLI_DIGEST" \
+    --accept-license --no-confirm
+```
+
+🔴 **비대화형 실행은 Superuser를 묻지 않고 CLI가 랜덤 생성합니다.** 대화형에서 입력했던 값은 적용되지 않으므로, 설치 후 시크릿에서 실제 값을 확인해야 합니다.
+
+```bash
+oc get secret inst1-credentials-superuser -n mas-inst1-core -o jsonpath='{.data.username}' | base64 -d; echo
+oc get secret inst1-credentials-superuser -n mas-inst1-core -o jsonpath='{.data.password}' | base64 -d; echo
+```
+
+명령은 **PipelineRun을 제출하고 끝납니다.** 이후는 클러스터 안에서 Tekton이 진행하므로 SSH가 끊겨도 무관합니다.
+
+진행 확인 : Task가 순차로 `Succeeded`가 되어야 합니다
+
+```bash
+watch -n 30 'date; oc get pipelinerun -n mas-inst1-pipelines; echo; oc get taskrun -n mas-inst1-pipelines --sort-by=.metadata.creationTimestamp | tail -6'
+```
+
+Task 순서와 대략적인 소요입니다.
+
+| Task | 내용 | 소요 |
 |---|---|---|
-| 클러스터 | 연결 방식 | 위에서 이미 `oc login` 완료 |
-| 카탈로그 | Catalog Version | `v9-260625-amd64` |
-| 카탈로그 | MAS Channel | `9.2.x` |
-| 라이선스 | 라이선스 동의 | 동의 |
-| 라이선스 | License File 경로 | `/mnt/home/mas-install/licenses/lincense_poc.dat` |
-| 라이선스 | IBM Entitlement Key | 환경변수로 전달됨 |
-| 스토리지 | Storage Class (RWO) | §3.9.1의 `lvms-vg1` |
-| 스토리지 | Storage Class (RWX) | §3.9.2의 `nfs-client` — ⚠️ **RWO 클래스를 넣으면 실패** |
-| 스토리지 | Pipeline Storage Class | MAS 설치 파이프라인(Tekton)용 — 보통 RWX 지정 |
-| 인스턴스 | MAS Instance ID | 환경별 결정값 (소문자·짧게) |
-| 인스턴스 | Workspace ID / Display Name | 환경별 결정값 |
-| 인스턴스 | **Operational Mode** | 운영/비운영(production / non-production) — **라이선스 소비에 영향** |
-| 계정 | **Superuser** 사용자명/비밀번호 | MAS 최초 관리자 계정 |
-| 계정 | **담당자 정보**(Contact) | 이름/이메일 — SLS 등록 정보 |
-| 도메인 | 기본 서브도메인 또는 커스텀 도메인 | `apps.mas-it.itmsg.co.kr` 기반 |
-| 고급 | **Admin Mode** | 관리자 전용 접근 모드 여부 |
-| 고급 | **Network Routing Mode** | Route 노출 방식 |
-| 고급 | SSO / Guided Tours 등 | 환경 정책에 따라 |
-| 앱 선택 | **설치할 애플리케이션** | **Manage 선택** (Assist/IoT/Monitor/Optimizer/Predict/VI 등은 선택하지 않음) |
-| DB | 데이터베이스 | **내장 Db2 자동 프로비저닝 선택** |
-| 기타 | Pod QoS 등 | 기본값 권장 |
+| `pipeline-start` ~ `suite-certs` | 사전 검증, 카탈로그, cert-manager, Grafana, MongoDB, DRO, SLS | 20~30분 |
+| **`db2-manage`** | Db2 인스턴스 생성·기동 | **15~40분** |
+| `suite-install` / `suite-config` / `suite-verify` | MAS Core | 20~40분 |
+| **`app-install` 계열** | **Manage + Maximo IT** — 이미지 빌드 포함 | **1~2시간** |
 
-클러스터에 Airgap(폐쇄망)용 `ImageDigestMirrorSet`이 이미 있으면 `mas install`이 이를 감지해 폐쇄망 설치 흐름으로 자동 전환됩니다.
+⚠️ `db2-manage`의 `FAILED - RETRYING: ... Wait for Db2uCluster instance to be ready`는 **실패가 아니라 5분 간격 재시도**입니다(최대 25회). Db2 자체 상태로 판단하세요.
 
-> `mas install`은 마지막에 **동일 설치를 재현할 수 있는 비대화형 명령**을 출력합니다. 재설치·다른 사이트 배포를 위해 **반드시 보관**하세요(비밀번호는 마스킹 후).
+```bash
+oc get db2ucluster -n db2u
+oc get pods -n db2u | grep db2u-0
+```
 
-⚠️ **미검증**: 위 항목 목록은 공식 install 가이드 기준이며 CLI 23.4.1의 실제 프롬프트와 순서·명칭이 다를 수 있습니다. 특히 `Pipeline Storage`, `Operational Mode`의 선택지는 실행 화면에서 확인하세요.
+실행 중인 Task의 로그를 보려면 Pod을 지정합니다.
 
-#### 3.10.2 확인 및 검증
+```bash
+TR=$(oc get taskrun -n mas-inst1-pipelines --sort-by=.metadata.creationTimestamp \
+  -o jsonpath='{range .items[?(@.status.conditions[0].status=="Unknown")]}{.metadata.name}{"\n"}{end}' | tail -1)
+echo "$TR"
+
+oc logs -n mas-inst1-pipelines "$(oc get pod -n mas-inst1-pipelines -l tekton.dev/taskRun=$TR -o name | head -1)" \
+  --all-containers --tail=30
+```
+
+웹 콘솔이 더 보기 편합니다 — `mas install`이 마지막에 URL을 출력합니다.
+
+```
+https://console-openshift-console.apps.<cluster>.<domain>/k8s/ns/mas-inst1-pipelines/tekton.dev~v1beta1~PipelineRun/<이름>
+```
+
+검증 : MAS Core가 올라오면 Suite가 `Ready`가 됩니다
 
 ```bash
 oc get suite -A
-oc get subscriptions -A
+oc get route -n mas-inst1-core
+```
+
+#### 3.10.4 확인 및 검증
+
+검증 : Suite가 생성되고 `Ready` 상태여야 합니다
+
+```bash
+oc get suite -A
+```
+
+검증 : Core 네임스페이스에 비정상 Pod이 없어야 합니다 (헤더만 남으면 정상)
+
+```bash
+oc get pods -n mas-inst1-core | grep -vE 'Running|Completed'
+```
+
+검증 : IBM Maximo Operator Catalog가 생성돼야 합니다 — `mas install`이 만듭니다
+
+```bash
 oc get catalogsource -n openshift-marketplace
-oc get pods -n mas-inst1-core | grep -v Running | grep -v Completed
+oc get subscriptions -A | grep -i ibm
+```
+
+검증 : Suite Administration Route가 있어야 합니다 — §3.11에서 이 주소로 접속합니다
+
+```bash
 oc get route -A | grep -E 'admin|mas'
 ```
 
-### 3.11 Manage + Maximo IT 배포·활성화 (웹 UI, Suite Administration 관리자 계정)
+🔴 노트북에서 접속하려면 `hosts`에 해당 이름을 추가해야 합니다 — `*.apps` 와일드카드는 hosts 파일이 지원하지 않습니다.
 
-⚠️ **이 절은 검증 수준이 가장 낮습니다.** IBM 지식센터 원문을 이 문서 작성 환경에서 직접 열지 못해 검색 스니펫 기준으로 작성했습니다. **진행 전 반드시 아래 공식 문서를 브라우저로 직접 열어 대조하세요.**
->
-> - Maximo IT 배포: <https://www.ibm.com/docs/en/max-it/cd.0.0_cd?topic=it-deploying-maximo-maximo-manage>
-> - Maximo IT 라이선스: <https://www.ibm.com/docs/en/max-it/cd.0.0_cd?topic=suite-licensing-maximo-it-in-maximo-application>
+```
+192.168.2.211    admin.inst1.apps.mas-it.itmsg.co.kr
+```
 
-#### 3.11.1 실행 — 기본 흐름
+#### 3.10.5 실패 시 초기화 — Manage 재설치
 
-1. Suite Administration(`https://admin.inst1.apps.mas-it.itmsg.co.kr`)에 §3.10의 Superuser로 로그인
-2. Catalog에서 **Manage** 선택
-3. **버전 선택** — ⚠️ 아래 "버전 호환성" 참고
-4. Workspace **Components**에서 **Maximo IT(ICD) add-on** 활성화
-5. **데이터베이스 구성** — JDBC 연결, schema, tablespace (⚠️ 아래 "한국어 사용 시" 참고)
-6. **언어 설정** — 기본 언어 및 추가 언어 선택 (⚠️ 설치 후 변경이 어려우므로 이 단계에서 확정)
-7. **Server Bundle 구성** — 워크로드 분리 방식(`all`, `snd` 등) 선택
-8. **Activate Manage** 실행 → 이미지 빌드·배포 진행 (내부 Image Registry 사용, §3.9.3)
-9. 활성화 완료 후 **관리자 권한 동기화 및 재로그인**
-10. Maximo IT 애플리케이션 접근 확인
+🔴 **잔여 오브젝트를 남기면 다음 설치가 조용히 어긋납니다.** 오퍼레이터와 Ansible 역할이 "이미 구성됨"으로 판단해 필요한 단계를 건너뛰기 때문입니다. 실제로 `db2u`의 ConfigMap 하나를 남겼다가 Db2 설정 적용 단계가 통째로 스킵되어 파이프라인이 멈췄습니다.
 
-#### 3.11.2 확인 및 검증
+**범위** — OCP·MAS Core·MongoDB·미러 레지스트리·스토리지는 그대로 두고 **Manage와 Db2만** 지웁니다.
 
-진행 전 아래 항목을 확정하세요.
+**1) 실행 — 파이프라인 정리**
 
-| 항목 | 내용 | 근거 |
-|---|---|---|
-| **Db2 테이블 구성 (ROW)** | 🔴 **Manage는 row-organized 테이블을 요구합니다.** Db2가 column-organized(기본값이 그럴 수 있음)로 설정되어 있으면 Manage가 정상 동작하지 않습니다. `DFT_TABLE_ORG`를 `ROW`로 설정해야 합니다. | ✅ 공식(MAS Performance Wiki, ansible-devops db2 role) |
-| **Db2 워크로드 설정** | `db2_workload=maximo` 레지스트리 설정 시 `WLM_ADMISSION_CTRL`이 `NO`로 자동 구성됩니다. ansible-devops db2 role 기준 Manage용 권장값은 `db2_table_org: ROW`. | ✅ 공식 |
-| **Db2 디스크 성능** | 권장 **처리량 250MB/s 이상**, **10~100 IOPS/GB**. 시스템/사용자/백업/트랜잭션 로그/임시 테이블스페이스를 **분리된 디스크**에 두는 것을 권장. | ✅ 공식 |
-| **버전 호환성** | Manage 버전과 Maximo IT(ICD) 버전은 **호환되는 조합**이어야 합니다. `latest`와 특정 버전을 **혼용하지 마세요** — 한쪽만 `latest`면 이후 업데이트에서 조합이 깨집니다. 양쪽 모두 명시적 버전 고정 권장. | ⚠️ 미검증 |
-| **한국어 사용 시 VARGRAPHIC** | 🔴 한국어 등 멀티바이트 언어 사용 시 Maximo가 **VARGRAPHIC** 컬럼 타입을 쓰도록 설정해야 할 수 있습니다. **DB 생성/Manage 활성화 시점에 결정되며 이후 변경이 매우 어렵습니다.** | ⚠️ **미검증 — 반드시 확인** (아래 참고) |
-| **언어 설정** | 활성화 시 기본 언어와 추가 언어를 지정합니다. 추가 언어는 DB 크기와 활성화 시간을 늘립니다. | ⚠️ 미검증 |
-| **Server Bundle 구성** | **UI / CRON / MIF(Integration) / Report 워크로드를 별도 번들로 분리**하면 동일 JVM 내 리소스 경합이 줄어듭니다. `ManageWorkspace` CR에서 번들별 replica·CPU·메모리를 조정합니다. | ✅ 공식(Performance Wiki) |
-| **관리자 권한 동기화** | 활성화 직후 Maximo IT 메뉴가 안 보일 수 있습니다. 권한 동기화 후 **로그아웃 → 재로그인** 필요. | ⚠️ 미검증 |
-| **활성화 후 설정** | 활성화 완료가 끝이 아닙니다 — 사용자/그룹 권한, AppPoints 할당, IT 초기 설정이 이어집니다. | ⚠️ 미검증 |
+```bash
+oc delete pipelinerun --all -n mas-inst1-pipelines
+```
 
-> ⚠️ "Server Bundle 분리"와 "Db2 테이블스페이스 디스크 분리"는 다중 노드/전용 스토리지 전제의 성능 권장사항입니다. SNO 단일 노드에서는 기본 구성으로 시작하세요.
+**2) 실행 — Manage 워크스페이스·애플리케이션 제거**
 
-🔴 **VARGRAPHIC과 AppPoints는 진행 전에 확정하세요.** 둘 다 나중에 되돌리기 어렵습니다.
+```bash
+oc delete manageworkspace --all -n mas-inst1-manage
+oc delete manageapp --all -n mas-inst1-manage
+```
 
-| 확인할 것 | 왜 |
+finalizer로 멈추면 다른 터미널에서 확인하고, 필요하면 제거합니다.
+
+```bash
+oc get manageworkspace -A
+oc patch manageworkspace <이름> -n mas-inst1-manage --type=merge -p '{"metadata":{"finalizers":null}}'
+```
+
+**3) 실행 — Manage 잔여물 제거**
+
+빌드·이미지스트림·설정이 남으면 다음 설치가 옛 값을 재사용합니다.
+
+```bash
+oc delete build --all -n mas-inst1-manage
+oc delete bc --all -n mas-inst1-manage
+oc delete is --all -n mas-inst1-manage
+oc delete cm -n mas-inst1-manage -l mas.ibm.com/instanceId=inst1
+oc delete deploy,statefulset -n mas-inst1-manage -l mas.ibm.com/instanceId=inst1
+```
+
+**4) 실행 — Db2 제거**
+
+🔴 **ConfigMap과 Secret까지 지워야 합니다.** Db2uCluster와 PVC만 지우면 다음 설치가 설정 단계를 건너뜁니다.
+
+```bash
+oc delete db2ucluster --all -n db2u
+oc delete statefulset,deploy,job,cronjob --all -n db2u --ignore-not-found
+oc delete pvc --all -n db2u
+oc delete cm --all -n db2u --ignore-not-found
+oc delete secret -n db2u -l app=mas-inst1-ws1-manage --ignore-not-found
+```
+
+⚠️ `db2u-operator-manager`와 `db2u-day2-ops-controller-manager`는 남겨둡니다. 위 명령이 이들의 Deployment도 지우므로, 오퍼레이터가 스스로 복구하는지 확인하고 안 되면 OLM이 재생성하도록 CSV를 확인하세요.
+
+**5) 확인 및 검증**
+
+검증 : `db2u`에 오퍼레이터만 남고 PVC·ConfigMap이 없어야 합니다
+
+```bash
+oc get db2ucluster,pods,pvc,cm -n db2u
+```
+
+검증 : Manage 리소스가 남아 있지 않아야 합니다
+
+```bash
+oc get manageworkspace,manageapp,build,bc,is -n mas-inst1-manage
+```
+
+검증 : NFS에 Db2 디렉터리가 남아 있지 않아야 합니다
+
+```bash
+ls /export/mas-rwx/
+```
+
+정리가 끝나면 §3.10.3을 다시 실행합니다.
+
+### 3.11 Manage + Maximo IT 확인 (웹 UI)
+
+🔴 **별도의 활성화 작업은 필요 없습니다.** `mas install`이 Manage 배포와 Maximo IT(`icd`) 활성화, DB 스키마 생성(maxinst), 이미지 빌드까지 모두 수행합니다. Suite Administration에서 "Activate Manage"를 누를 일이 없습니다.
+
+#### 3.11.1 확인 및 검증
+
+검증 : 워크스페이스가 `Ready` 여야 합니다
+
+```bash
+oc get manageworkspace -A
+```
+
+검증 : Maximo IT(`icd`)가 컴포넌트에 들어 있어야 합니다
+
+```bash
+oc get manageworkspace inst1-ws1 -n mas-inst1-manage -o jsonpath='{.spec.components}{"\n"}'
+```
+
+```
+{"base":{"version":"latest"},"icd":{"version":"latest"}}
+```
+
+검증 : 언어·데모 데이터·타임존이 의도대로 들어갔는지
+
+```bash
+oc get manageworkspace inst1-ws1 -n mas-inst1-manage -o jsonpath='{.spec.settings}' | jq
+```
+
+| 항목 | 기대값 |
 |---|---|
-| 한국어 사용 시 VARGRAPHIC 설정 **위치** (Db2 레벨 vs Manage 활성화 레벨) | ansible-devops `db2` role에 문자셋 전용 변수가 없어 어디서 설정하는지 미확정. DB 생성/활성화 시점에 결정되면 이후 변경이 매우 어려움 |
-| 라이선스에 **Maximo IT용 AppPoints 항목**이 실제로 포함되어 있는지 | MAS Entitlement와 Maximo IT Entitlement는 **각각** 필요. 없으면 Manage는 배포되지만 IT add-on 활성화 또는 사용자 할당에서 막힘 |
+| `languages.baseLang` / `secondaryLangs` | `EN` / `["KO"]` |
+| `db.maxinst.demodata` | `true` |
+| `db.maxinst.db2Vargraphic` | `true` (기본값) |
+| `deployment.serverTimezone` | `Asia/Seoul` |
 
-참고 문서:
+검증 : 서버 Pod이 `2/2 Running` 이어야 합니다
 
-- [Db2 configuration — MAS](https://www.ibm.com/docs/en/masv-and-l/cd?topic=deployment-configuring-db2)
-- [Database configuration details for Maximo Manage](https://www.ibm.com/docs/en/masv-and-l/cd?topic=install-database-configuration-details-maximo-manage)
-- [MAS Performance Wiki — Manage best practice](https://ibm-mas.github.io/mas-performance/mas/manage/bestpractice/)
-- [ansible-devops db2 role](https://ibm-mas.github.io/ansible-devops/roles/db2/)
+```bash
+oc get pods -n mas-inst1-manage | grep -- '-all-'
+```
+
+검증 : 접속 주소는 **워크스페이스 ID가 앞에 붙습니다**
+
+```bash
+oc get route -n mas-inst1-manage
+```
+
+| Route | 용도 |
+|---|---|
+| **`ws1.manage.inst1.apps.…`** | **Maximo Manage / Maximo IT 메인** |
+| `ws1-all.manage.inst1.apps.…` | `all` 서버 번들 직접 접근 |
+| `maxinst.manage.inst1.apps.…` | 관리 도구 (ERD, toolsapi) |
+
+⚠️ `manage.inst1.apps.…`(워크스페이스 ID 없는 주소)는 오퍼레이터가 먼저 만드는 Route이며 서비스되지 않습니다.
+
+#### 3.11.2 웹 UI 확인
+
+1. `https://ws1.manage.inst1.apps.<cluster>.<domain>` 접속 — `hosts` 등록과 인증서 수락이 필요합니다(§3.12.1)
+2. §3.10.3에서 확인한 Superuser로 로그인
+3. **Service Desk / Incident / Problem / Service Request** 메뉴가 보이면 Maximo IT 정상
+4. 사용자 프로필에서 언어를 한국어로 전환해 확인
+5. 자산·작업오더 목록에 데모 데이터가 있는지 확인
+
+#### 3.11.3 설치 후 작업
+
+| 항목 | 내용 |
+|---|---|
+| **정식 관리자 계정 생성** | Superuser는 초기 구성 전용입니다. Suite Administration에서 담당자 계정을 만들고 이후로는 그것을 사용하세요 |
+| **AppPoints 할당** | ⬜ 라이선스에 Maximo IT용 AppPoints가 포함되어 있는지 확인 필요. MAS Entitlement와 Maximo IT Entitlement는 각각 필요합니다 |
+| 사용자·그룹 권한 | Maximo IT 애플리케이션별 권한 설정 |
 
 ### 3.12 설치 후 확인 (사용자 계정)
 
-#### 3.12.1 확인 및 검증
+#### 3.12.1 실행 — 접속용 `hosts` 등록 (검증용)
+
+⚠️ **이 절은 구축 담당자가 검증할 때 쓰는 방법입니다.** 사내 사용자에게 이렇게 배포할 수는 없습니다 — 운영 전환 방안은 §3.12.3을 보세요.
+
+폐쇄망에는 사내 DNS가 없고, Bastion의 dnsmasq는 클러스터 전용입니다. **노트북·PC에서 웹 UI에 접속하려면 `hosts` 파일에 이름을 직접 넣어야 합니다** — `*.apps` 와일드카드는 hosts 파일이 지원하지 않아 개별 이름이 필요합니다.
+
+🔴 **호스트마다 인증서를 따로 수락해야 합니다.** 자체 서명이라 브라우저가 호스트별로 신뢰를 묻습니다. `admin.inst1…` 만 수락하면 Suite Administration이 **로딩 화면에서 멈춥니다** — `api.inst1…` 로 가는 XHR이 전부 차단되기 때문입니다(개발자 도구 Network에 `(failed)` 로 보임).
+
+새 탭에서 아래 주소를 하나씩 열어 "고급 → 계속"으로 수락하세요. 흰 화면이나 404가 떠도 무방합니다.
+
+```
+https://api.inst1.apps.<cluster-name>.<base-domain>
+https://auth.inst1.apps.<cluster-name>.<base-domain>
+https://home.inst1.apps.<cluster-name>.<base-domain>
+```
+
+MAS 루트 CA를 PC 신뢰 저장소에 넣으면 이 과정이 필요 없습니다.
+
+```bash
+oc get secret inst1-cert-public-ca -n mas-inst1-core -o jsonpath='{.data.ca\.crt}' | base64 -d > mas-root-ca.crt
+```
+
+Bastion에서 필요한 줄을 통째로 생성합니다.
+
+```bash
+export KUBECONFIG=~/ocp-sno/auth/kubeconfig
+
+{
+  echo "192.168.2.210    registry.mas-it.itmsg.co.kr"
+  echo "192.168.2.211    api.mas-it.itmsg.co.kr"
+  oc get route -A -o jsonpath='{range .items[*]}192.168.2.211    {.spec.host}{"\n"}{end}'
+} | sort -u
+```
+
+출력을 그대로 복사해 `hosts` 파일 끝에 붙여넣습니다.
+
+| OS | 경로 |
+|---|---|
+| Windows | `C:\Windows\System32\drivers\etc\hosts` (관리자 권한) |
+| macOS / Linux | `/etc/hosts` (root) |
+
+주요 이름은 이렇습니다.
+
+| 이름 | 용도 |
+|---|---|
+| `registry.<cluster>.<domain>` | Mirror Registry (Quay) — **Bastion IP** |
+| `api.<cluster>.<domain>` | OCP API — 노트북에서 `oc` 사용 시 |
+| `console-openshift-console.apps.…` | OCP 웹 콘솔 |
+| `oauth-openshift.apps.…` | 콘솔 로그인 리다이렉트 — **빠지면 로그인 불가** |
+| `admin.inst1.apps.…` | MAS Suite Administration |
+| `home.inst1.apps.…` | MAS 홈 |
+| `auth.inst1.apps.…` | MAS 인증 |
+| `manage.inst1.apps.…` | Maximo Manage / Maximo IT |
+
+⚠️ Route는 설치가 진행되면서 늘어납니다. Manage 서버가 올라온 뒤 위 명령을 **다시 실행해** 추가된 이름(`ws1.manage.…` 등)을 넣으세요.
+
+#### 3.12.2 운영 전환 — DNS와 인증서
+
+🔴 **`hosts` 등록과 인증서 개별 수락은 사내 사용자에게 적용할 수 없습니다.** 운영 전환 전에 아래 둘을 확정해야 합니다.
+
+**DNS — 사내 DNS에 와일드카드 등록**
+
+```
+*.apps.<cluster-name>.<base-domain>   A   <sno-ip>
+api.<cluster-name>.<base-domain>      A   <sno-ip>
+registry.<cluster-name>.<base-domain> A   <bastion-ip>
+```
+
+와일드카드 한 줄이면 Route가 늘어나도 손댈 필요가 없습니다. 사내 DNS가 없다면 Bastion의 dnsmasq를 사내 DNS로 승격하거나, 상위 DNS에서 해당 존을 Bastion으로 위임해야 합니다.
+
+**인증서**
+
+| 방식 | 판단 |
+|---|---|
+| **사내 CA 발급 인증서** | 사내 PC는 이미 사내 CA를 신뢰하므로 경고가 없습니다. 가장 깔끔합니다 |
+| MAS 자체 서명 CA를 전 PC에 배포 | GPO 등으로 루트 CA 배포. 사내 CA가 없을 때 |
+| 공인 인증서 | 폐쇄망 도메인이라 발급이 어렵습니다 |
+
+MAS는 설치 시 커스텀 도메인·인증서를 지정할 수 있습니다 — §3.10.2의 `Configure custom domain and certificate management?` 입니다. 이번 배포는 `n`으로 자체 서명을 택했고, 운영 전환 시에는 여기서 사내 인증서를 넣거나 설치 후 교체합니다.
+
+⬜ **사이트 구축 전 확정 필요** — 사내 DNS 존재 여부, 사내 CA 존재 여부.
+
+#### 3.12.3 확인 및 검증
 
 ```bash
 oc get nodes
@@ -2744,6 +3749,71 @@ oc get route -A | grep -E 'mas|manage|admin'
 - [ ] Suite Administration에서 Manage + Maximo IT add-on이 Ready/Active
 - [ ] Maximo IT 메뉴/애플리케이션 접근 가능
 - [ ] AppPoints 소비 정상 확인
+
+#### 3.12.4 노드 종료·재시작 절차
+
+VM 사양 변경, 점검, 이설 등으로 SNO를 내려야 할 때의 순서입니다.
+
+🔴 **Db2를 먼저 정지해야 합니다.** 순서를 지키지 않으면 데이터베이스가 손상되고, 순환 로깅(`LOGARCHMETH1: OFF`) 구성이라 **복구가 불가능해 Manage DB를 재생성해야 합니다.**
+
+**1) 실행 — Db2 정지**
+
+```bash
+oc rsh -n db2u c-mas-inst1-ws1-manage-db2u-0 bash -c \
+  'su - db2inst1 -c "db2 force applications all; db2 deactivate db BLUDB; db2stop"'
+```
+
+검증 : 오류 없이 `DB2STOP processing was successful` 이 나와야 합니다
+
+**2) 실행 — Db2 StatefulSet 정지**
+
+오퍼레이터가 다시 띄우지 않도록 내려둡니다.
+
+```bash
+oc scale statefulset c-mas-inst1-ws1-manage-db2u -n db2u --replicas=0
+oc get pods -n db2u
+```
+
+**3) 실행 — 노드 종료**
+
+SNO는 워크로드를 옮길 다른 노드가 없어 `cordon`·`drain`은 의미가 없습니다.
+
+```bash
+ssh -i ~/.ssh/quay_installer core@<sno-ip> 'sudo shutdown -h now'
+```
+
+검증 : 응답이 끊겨야 종료 완료입니다
+
+```bash
+ping -c 3 <sno-ip>
+```
+
+🔴 **NFS를 RWX로 쓰면 종료가 지연됩니다.** SSH는 `Connection refused`인데 ping이 계속 응답하고 vSphere에서도 전원이 안 꺼지는 상태가 됩니다 — Bastion NFS 언마운트에서 걸린 것입니다.
+
+**이때 강제 전원 끄기를 하면 안 됩니다.** SSH가 끊긴 것은 "모든 것이 정리됐다"는 뜻이 아닙니다. 1)~2)를 먼저 해두면 이 시점에 Db2가 이미 안전하게 내려가 있으므로 지연이 있어도 기다렸다가 정상 종료를 확인하면 됩니다.
+
+**4) 실행 — 재시작 후 복구**
+
+전원을 켜면 노드는 5~10분 안에 `Ready`가 되지만, MAS 전체가 정상화되는 데는 더 걸립니다.
+
+```bash
+oc get nodes
+oc scale statefulset c-mas-inst1-ws1-manage-db2u -n db2u --replicas=1
+```
+
+검증 : Db2가 먼저 올라와야 Manage가 붙습니다
+
+```bash
+oc get db2ucluster -n db2u
+oc get pods -n db2u | grep db2u-0
+```
+
+검증 : Manage 서버가 `2/2` 가 되어야 합니다 — Db2보다 먼저 뜨면 연결 실패로 재시작을 반복합니다
+
+```bash
+oc get pods -n mas-inst1-manage | grep -E '\-all\-'
+oc get manageworkspace -A
+```
 
 ---
 
@@ -2910,3 +3980,49 @@ FATAL failed to load asset "Install Config": invalid install-config configuratio
 awk '/name: idms-release-0/{d=1} d&&/^  imageDigestMirrors:/{f=1;next} /^---/{f=0;d=0} f' \
   ~/mas-install/mirror/redhat/working-dir/cluster-resources/idms-oc-mirror.yaml
 ```
+
+### 4.7 MCO가 `registries.conf`를 렌더링하지 못함 — `conflicting mirrorSourcePolicy`
+
+**증상**: §3.8.2 이후 IDMS 오브젝트는 존재하고 `oc get mcp`도 `UPDATED=True`인데, **노드의 `registries.conf`에 반영되지 않습니다.** 새 `rendered-master-*`가 생성되지 않는 것이 단서입니다.
+
+MAS 설치(§3.10)에서 `TaskRunImagePullFailed`로 드러납니다 — Tekton이 `quay.io/ibmmas/cli@sha256:...`를 당기는데 미러 매핑이 없기 때문입니다.
+
+```bash
+oc logs -n openshift-machine-config-operator deploy/machine-config-controller --tail=20
+```
+
+```
+Error syncing image config openshift-config: could not Create/Update MachineConfig:
+could not update registries config with new changes:
+conflicting mirrorSourcePolicy is set for the same source "icr.io/cpopen"
+in imagedigestmirrorsets, imagetagmirrorsets, or imagecontentsourcepolicies
+```
+
+**원인**: §3.8.1의 `idms-operator-0`(oc-mirror 생성)과 §3.8.2의 `mas-ibm-catalog`(`mas configure-airgap` 생성)가 **같은 source에 다른 `mirrorSourcePolicy`** 를 지정합니다.
+
+| IDMS | `icr.io/cpopen` 정책 |
+|---|---|
+| `idms-operator-0` | 기본값 (`AllowContactingSource`) |
+| `mas-ibm-catalog` | `NeverContactSource` |
+
+정책이 충돌하면 MCO는 **registries.conf 전체 렌더링을 중단**합니다. 그 결과 `mas-ibm-catalog`의 매핑이 **하나도 반영되지 않습니다** — `quay.io/ibmmas`, `cp.icr.io/cp`, `icr.io/db2u` 등 MAS 이미지 경로 전부입니다.
+
+**해결**: 충돌하는 source의 정책을 맞춥니다.
+
+```bash
+IDX=$(oc get idms idms-operator-0 -o json | \
+  jq -r '.spec.imageDigestMirrors | to_entries[] | select(.value.source=="icr.io/cpopen") | .key')
+
+oc patch idms idms-operator-0 --type=json \
+  -p "[{\"op\":\"add\",\"path\":\"/spec/imageDigestMirrors/$IDX/mirrorSourcePolicy\",\"value\":\"NeverContactSource\"}]"
+```
+
+적용되면 새 `rendered-master-*`가 생기고 항목 수가 34 → 43으로 늘어납니다.
+
+```bash
+oc get mc --sort-by=.metadata.creationTimestamp | tail -2
+ssh -i ~/.ssh/quay_installer core@<sno-ip> 'grep -c "^\[\[registry\]\]" /etc/containers/registries.conf'
+```
+
+⚠️ **`quay.io/ibmmas` IDMS를 따로 만들지 마세요.** `mas-ibm-catalog`에 이미 들어 있어 중복 정의가 되고, 같은 충돌을 하나 더 만듭니다.
+

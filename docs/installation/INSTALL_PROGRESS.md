@@ -95,7 +95,95 @@
 | 3.5 Mirror Registry (Quay) 설치 | ✅ 컨테이너 3개 `Up`, `curl … /v2/` → `401`(`-k` 없이), `podman login` → `Login Succeeded!` |
 | 3.6 이미지 Push | ✅ Red Hat 373GB + MAS 4단계, `[FAILURE]` 0건. Quay Organization 31개 |
 | 3.7 SNO 설치 | ✅ `4.20.30` / 노드 `Ready` / `sdb` 500GB 빈 상태 확인 |
-| 3.8 이후 | ⬜ |
+| 3.8 Airgap(폐쇄망) 구성 | ✅ IDMS 33건 + CatalogSource 3건, `mas configure-airgap` 완료, 미러 Pull 테스트 `Running` |
+| 3.9 스토리지 준비 | ✅ RWO `lvms-vg1` / RWX `nfs-client` / 쓰기 테스트 통과 / 내부 Image Registry `Managed` |
+| 3.10 MAS Core 설치 | ✅ PipelineRun `Succeeded` (65분). Core 9.2.0 / Manage 9.2.0 `Ready`, 컴포넌트 `base`+`icd` |
+| 3.11 이후 | ⬜ |
+
+### §3.10에서 확인한 것
+
+**대화형 프롬프트를 전부 실측해 [OFFLINE_INSTALL.md §3.10.2](OFFLINE_INSTALL.md)에 순서대로 기록했습니다.** 예상 목록만으로는 따라갈 수 없어 화면 문구 기준으로 다시 작성했습니다.
+
+🔴 **13.1 `Create Manage dedicated Db2 instance ...` 에서 `n`을 고르면 안 됩니다.** 화면 설명은 "시스템 Db2 공유 vs 전용"으로 읽히지만 실제 `n`은 **외부 DB를 JDBC로 연결**하는 경로이고, `JDBC Connection String`을 직접 입력하라고 요구합니다. 외부 DB가 없으면 `y`로 전용 Db2를 만들어야 합니다.
+
+**`$HOME`을 컨테이너에 마운트할 수 없습니다** — `Error: SELinux relabeling of /home/maximo is not allowed`. 라이선스 디렉터리(`:ro`)와 설정 디렉터리(쓰기 가능)를 따로 마운트해야 합니다. `Select Local configuration directory`가 JDBC 설정 파일을 **생성**하므로 읽기 전용 경로를 주면 거기서 막힙니다.
+
+**Entitlement Key 검증은 실패하는 게 정상입니다.** CLI가 `cp.icr.io`로 확인하려는데 폐쇄망이라 나갈 수 없습니다 — `2` (Continue anyway)로 넘깁니다.
+
+**폐쇄망에서는 CLI 이미지 다이제스트를 직접 입력해야 합니다.**
+
+```bash
+podman image inspect quay.io/ibmmas/cli:23.4.1 --format '{{.Digest}}'
+```
+
+입력하면 Tekton 정의가 `quay.io/ibmmas/cli@sha256:...` 형태로 변환되고, §3.8.1의 IDMS가 이를 미러로 리다이렉트합니다.
+
+**Maximo IT는 `11.1) Maximo Manage Components`에서 켭니다.** 기본값은 Health만 활성화라 그대로 두면 빠집니다. 목록 중간(`Maximo IT`)에 있어 무심코 넘기기 쉽습니다. 제대로 선택되면 `11.2) Maximo IT License Terms` 화면이 추가로 나옵니다.
+
+실제 적용값이 입력 화면과 다른 것이 둘 있습니다.
+
+| 항목 | 화면 표시 | 실제 적용 |
+|---|---|---|
+| Db2 CPU/볼륨 | 4000m / 425Gi | **300m / 60Gi** (`server-bundle-size: dev` 기준) |
+| Manage Server Timezone | `Asia/Seoul` 입력 | **`Default`** — 반영 안 됨 |
+
+Db2 축소는 SNO에 오히려 적합합니다. 타임존은 설치 후 `ManageWorkspace` CR에서 조정합니다.
+
+**`db2wh`의 row-organized 문제는 없었습니다.** IBM 역할이 Db2uCluster CR에 `dftTableOrg: ROW`를 명시적으로 넣습니다 — 미확정으로 남겨뒀던 항목이 해소됐습니다.
+
+**한국어 VARGRAPHIC도 자동으로 켜집니다.** `ManageWorkspace` CR에 `db2Vargraphic: true`가 기본값으로 들어갑니다. 이것도 오래 남아 있던 위험 항목이었습니다.
+
+`mas install`이 만든 `ManageWorkspace` 설정값입니다.
+
+| 항목 | 값 |
+|---|---|
+| `db2Vargraphic` | **`true`** — 한국어 저장 가능 |
+| `baseLang` / `secondaryLangs` | `EN` / `[]` — 한국어는 §3.11에서 추가 |
+| `serverTimezone` | **`GMT`** — 설치 시 입력한 `Asia/Seoul`이 반영 안 됨 |
+| `dbSchema` / `tableSpace` / `indexSpace` | `maximo` / `MAXDATA` / `MAXINDEX` |
+| `serverBundles` | `all` 1개, replica 1 |
+| `demodata` | `false` |
+| `components` | `base` + **`icd`** |
+
+⚠️ `app-cfg-manage`의 워크스페이스 대기 타임아웃은 **18시간**입니다(360초 × 180회). Manage 이미지 빌드와 DB 스키마 생성(maxinst)이 이 구간에서 일어납니다.
+
+### §3.9에서 확인한 것
+
+**NFS 프로비저너는 SCC 부여가 필수입니다.** 기본 `restricted` SCC가 NFS 볼륨을 허용하지 않아 **Pod 생성 자체가 거부**됩니다(`oc get pods`에 아무것도 안 나옴). 문서에 "필요 여부 미검증"으로 남아 있던 항목이 필수로 확정됐습니다.
+
+```
+spec.volumes[0]: Invalid value: "nfs": nfs volumes are not allowed to be used
+```
+
+```bash
+oc adm policy add-scc-to-user hostmount-anyuid -z nfs-client-provisioner -n nfs-provisioner
+```
+
+**§3.9.3(스토리지 검증)을 §3.9.4(내부 Image Registry)보다 먼저 하도록 순서를 바꿨습니다.** Image Registry가 200Gi NFS PVC를 만드는데, NFS 쓰기가 안 되는 상태에서 진행하면 원인이 스토리지인지 레지스트리 설정인지 구분되지 않습니다.
+
+`lvms-vg1`은 `WaitForFirstConsumer`라 **PVC만 만들면 `Pending`이 정상**입니다 — Pod이 붙어야 볼륨이 생성됩니다.
+
+스토리지 쓰기 테스트 이미지는 **`ibmmas/cli:latest`** 를 씁니다. `rhel9/support-tools:latest`는 `repository not found`가 납니다 — `oc debug`가 그 이미지를 쓰긴 하지만 릴리스 페이로드의 **다이제스트**로 당기는 것이라 미러에 `latest` 태그가 없습니다.
+
+`platform: none` 설치는 내부 Image Registry가 `managementState: Removed`, 스토리지 `{}` 상태로 시작합니다. §3.11 Manage 활성화가 이미지를 빌드해 push하므로 반드시 `Managed`로 전환해야 합니다. PVC 200Gi는 미검증 예시값이며 NFS는 thin provisioning이라 실사용분만 차지합니다.
+
+### §3.8에서 확인한 것
+
+**`mas configure-airgap`에는 `--setup-redhat-catalogs`·`--setup-redhat-release` 플래그가 실제로 있습니다** — 오랫동안 미검증으로 남아 있던 항목이 해소됐습니다. 다만 쓰지 않았습니다. IBM CLI가 만드는 IDMS·CatalogSource는 일반형인데 우리 미러는 prefix 없이 업스트림 네임스페이스를 그대로 쓰는 레이아웃이라, `oc mirror`가 생성한 `cluster-resources/`가 경로상 정확합니다.
+
+**CLI는 클러스터에 로그인돼 있지 않으면 `--help`조차 출력하지 않습니다.** kubeconfig를 컨테이너에 마운트하는 방식이 `oc login --token`보다 낫습니다 — 토큰을 뽑을 필요도, 만료도 없습니다.
+
+MachineConfig 롤아웃은 SNO에서 **1~2분 만에 끝나 `UPDATING=True`를 못 볼 수 있습니다.** 완료 판정은 `oc get mcp`의 `CONFIG` 이름이 새로 바뀌었는지로 합니다. 노드의 `/etc/containers/registries.conf`에 `[[registry]]` 블록이 34개(IDMS 33 + ITMS 1) 있으면 반영된 것입니다.
+
+IDMS 오브젝트는 네 개이며 출처가 다릅니다.
+
+| 이름 | 출처 |
+|---|---|
+| `image-digest-mirror` | §3.7 `install-config.yaml`의 `imageDigestSources` |
+| `idms-release-0` / `idms-operator-0` | §3.8.1 `cluster-resources/` |
+| `mas-ibm-catalog` | §3.8.2 `mas configure-airgap` |
+
+미러 Pull 테스트 이미지는 **`ibmmas/cli:latest`** 입니다. `:23.4.1`로 시도하면 `manifest unknown`이 납니다 — `mas mirror-images`가 `latest` 태그로 올립니다.
 
 ### §3.7에서 확인한 것
 
@@ -160,21 +248,29 @@ MAS push에는 **`--ibm-entitlement`가 필수**입니다 — 폐쇄망이라 �
 
 ### 실행하면서 즉시 확인 가능
 
-| 항목 | 확인 방법 | 관련 절 |
-|---|---|---|
-| `from-filesystem`이 `working-dir`도 필요한지 (tar 외에) | §3.6 첫 실행 | §3.6 |
-| `imageDigestSources` vs `imageContentSources` | `openshift-install explain installconfig \| grep -i image` | §3.7 |
-| `LVMCluster`의 `apiVersion` | `oc explain lvmcluster` | §3.9.1 |
-| NFS 프로비저너 SCC 부여 필요 여부 | 배포 후 Pod 상태 | §3.9.2 |
+**해소된 항목** — 실행으로 확인했습니다.
 
-### 공식 문서를 브라우저로 직접 확인해야 하는 것
+| 항목 | 결과 |
+|---|---|
+| ~~한국어 VARGRAPHIC 설정 위치~~ | ✅ `ManageWorkspace`의 `db2Vargraphic: true` — **기본값으로 자동 적용** |
+| ~~Db2 `db2wh`의 row-organized 문제~~ | ✅ Db2uCluster CR에 `dftTableOrg: ROW` 자동 설정 |
+| ~~Manage가 내부 Image Registry를 쓰는지~~ | ✅ 사용함. `admin-build-config` / `all-build-config` 두 빌드가 push |
+| ~~NFS 프로비저너 SCC 부여 필요 여부~~ | ✅ **필수** — 없으면 Pod 생성 자체가 거부 |
+| ~~`from-filesystem`이 `working-dir`도 필요한지~~ | ✅ IBM 래퍼를 쓰지 않고 `oc mirror` 직접 호출로 해결(§4.5) |
+| ~~`imageDigestSources` vs `imageContentSources`~~ | ✅ `imageDigestSources` 사용, release 2건만(§4.6) |
+| ~~`LVMCluster`의 `apiVersion`~~ | ✅ 확인 완료 |
+| ~~`mas configure-airgap`의 Red Hat 플래그 실존 여부~~ | ✅ 존재하나 미사용 — `oc mirror` 산출물이 경로상 정확 |
+
+**남은 미확정 항목**
 
 | 항목 | 비고 |
 |---|---|
-| 🔴 **한국어 VARGRAPHIC 설정 위치** | ansible-devops `db2` role에 문자셋 전용 변수 없음. Db2 레벨인지 Manage 활성화 레벨인지 불명. **되돌리기 가장 어려운 결정** |
-| **Maximo IT AppPoints 권한** | 라이선스 파일 보유가 IT 권한 보유를 의미하지 않음. MAS Entitlement와 Maximo IT Entitlement가 각각 필요 |
-| Manage + Maximo IT 배포 절차 (§3.11) | IBM 지식센터가 자동 조회 환경에서 403. Db2 ROW·Server Bundle 등 일부만 검증됨 |
-| Manage가 내부 Image Registry를 쓰는지 | §3.9.3의 용량 산정에 영향 |
+| 🔴 **사내 DNS 존재 여부** | 없으면 사용자 PC마다 `hosts` 등록이 필요해 운영 불가. `*.apps` 와일드카드 등록 또는 Bastion dnsmasq 위임 필요(§3.12.2) |
+| 🔴 **사내 CA 존재 여부** | 자체 서명 인증서는 호스트마다 브라우저 경고가 뜨고, `api.inst1…` 을 수락하지 않으면 Suite Administration이 로딩에서 멈춤. 사내 CA 발급 인증서 또는 루트 CA 배포 필요(§3.12.2) |
+| **Maximo IT AppPoints 권한** | 라이선스 파일 보유가 IT 권한 보유를 의미하지 않음. 실제 사용 시 확인 필요 |
+| **한국어 추가 언어 적용 방법** | `baseLang: EN` / `secondaryLangs: []` 로 설치됨. 한국어를 쓰려면 추가 절차 필요 |
+| **Server Timezone 반영 방법** | 설치 시 `Asia/Seoul` 입력이 무시되고 `GMT`로 들어감. `ManageWorkspace` CR 수정으로 되는지 미확인 |
+| **Superuser 계정 변경 방법** | 시크릿 수정 후 MAS가 재기동 시 다시 읽는지 미확인. 정식 관리자 계정 생성이 권장 경로 |
 | SNO에서 PTR(역방향) DNS 필수 여부 | §3.2 |
 
 ## 구조적 리스크 (의사결정 필요)
