@@ -3505,6 +3505,48 @@ oc get route -A | grep -E 'admin|mas'
 
 **범위** — OCP·MAS Core·MongoDB·미러 레지스트리·스토리지는 그대로 두고 **Manage와 Db2만** 지웁니다.
 
+**0) 실행 — 한 번에 정리** (아래 1)~5)를 합친 것)
+
+```bash
+# A) Manage 제거
+oc delete pipelinerun --all -n mas-inst1-pipelines --wait=false
+oc delete manageworkspace --all -n mas-inst1-manage --wait=false
+oc delete manageapp --all -n mas-inst1-manage --wait=false
+sleep 30
+for r in manageworkspace manageapp; do
+  for n in $(oc get $r -n mas-inst1-manage -o name 2>/dev/null); do
+    oc patch $n -n mas-inst1-manage --type=merge -p '{"metadata":{"finalizers":null}}'
+  done
+done
+
+# B) Manage 잔여물 제거
+oc delete build,bc,is --all -n mas-inst1-manage --wait=false
+oc delete cm,secret -n mas-inst1-manage -l mas.ibm.com/instanceId=inst1 --wait=false
+oc delete deploy,statefulset -n mas-inst1-manage -l mas.ibm.com/instanceId=inst1 --wait=false
+
+# C) Db2 제거 — ConfigMap까지 반드시
+oc delete db2ucluster --all -n db2u --wait=false
+sleep 10
+for n in $(oc get db2ucluster -n db2u -o name 2>/dev/null); do
+  oc patch $n -n db2u --type=merge -p '{"metadata":{"finalizers":null}}'
+done
+oc delete statefulset,deploy,job,cronjob -n db2u -l app=mas-inst1-ws1-manage --wait=false
+oc delete pvc --all -n db2u --wait=false
+oc delete cm mas-inst1-ws1-manage-enforce-config -n db2u --ignore-not-found
+oc delete cm,secret -n db2u -l app=mas-inst1-ws1-manage --ignore-not-found
+oc delete route --all -n db2u --ignore-not-found
+
+# D) 확인
+sleep 20
+echo "=== db2u ==="; oc get db2ucluster,pods,pvc,cm -n db2u
+echo "=== manage ==="; oc get manageworkspace,manageapp,build,bc,is -n mas-inst1-manage
+echo "=== nfs ==="; ls /export/mas-rwx/
+```
+
+`db2u`에 오퍼레이터 2개만 남고 PVC가 없으면 정리 완료입니다. 이후 §3.10.3을 다시 실행합니다.
+
+아래는 단계별 설명입니다.
+
 **1) 실행 — 파이프라인 정리**
 
 ```bash
