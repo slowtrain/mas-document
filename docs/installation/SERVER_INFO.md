@@ -177,6 +177,7 @@ BuildReady: False — Request Build Failed : Unexpected error occured while requ
 | Suite Administration | `https://admin.inst1.apps.mas-it.itmsg.co.kr` |
 | Manage / Maximo IT | `https://manage.inst1.apps.mas-it.itmsg.co.kr` |
 | Superuser | `O1Soo6ql8f0fXzaLKGhzSMa400EDFNvQ` / `qIDqNdwuttnWw94dF6B9SUdJ6BxNKClA` |
+
 | 담당자 (Contact) | first `seungwoo` / last `baek` / `bsw78@itmsg.co.kr` |
 | Instance ID / Workspace ID | `inst1` / `ws1` (표시명 `Maximo IT`) |
 | Operational Mode | **non-production** — 🔴 설치 후 변경 불가 |

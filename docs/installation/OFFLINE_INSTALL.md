@@ -3453,6 +3453,50 @@ oc logs -n mas-inst1-pipelines "$(oc get pod -n mas-inst1-pipelines -l tekton.de
   --all-containers --tail=30
 ```
 
+**`app-install` 단계 상세 확인 — Manage 이미지 빌드부터 서버 기동까지.** 이 단계는 Tekton TaskRun 하나로는 안이 안 보이고, 실제로는 `mas-inst1-manage` 네임스페이스 안에서 아래 순서로 진행됩니다(총 1~2시간).
+
+| 순서 | 확인 대상 | 무슨 일 | 소요 |
+|---|---|---|---|
+| 1 | `admin-build-config-*` (Build) | Admin 번들 이미지 빌드 → 내부 Image Registry에 push | ~10분 |
+| 2 | `all-build-config-*` (Build) | 서버 번들(Maximo IT 포함) 이미지 빌드 → push | ~15분 |
+| 3 | `inst1-ws1-manage-maxinst-*` (Pod) | 방금 만든 이미지로 **DB 스키마 생성** — Db2에 테이블·인덱스 생성, `demodata`면 데모데이터까지 적재 | 90분~2시간 |
+| 4 | `*-all-*` (Deployment) | maxinst 완료 후 생성 — 실제 Maximo 서버(Liberty) 기동 | 수분~10여 분 |
+
+```bash
+# 지금 어느 순서인지 한눈에
+oc get build,pods -n mas-inst1-manage
+```
+
+- 빌드 2개가 `Complete`인데 `-all-*` Pod이 안 보이면 → **3번(maxinst) 진행 중**이 정상입니다. `*-all-*`은 maxinst가 끝나야 생성됩니다.
+- 각 단계 로그:
+
+```bash
+# 1, 2 — 빌드 로그
+oc logs -f build/all-build-config-1 -n mas-inst1-manage --tail=30
+oc logs -f build/admin-build-config-1 -n mas-inst1-manage --tail=30
+
+# 3 — maxinst 진행 상황 (계속 새 줄이 찍히면 정상, 몇 분째 멈춰 있으면 문제)
+oc logs -n mas-inst1-manage deploy/inst1-ws1-manage-maxinst -f --tail=20
+
+# 3 완료 판정 — 상태가 0/1 Completed로 바뀌면 끝
+oc get pods -n mas-inst1-manage | grep maxinst
+
+# 4 — 서버 기동. 컨테이너 로그엔 대기 루프만 찍히므로 Pod 안 /logs/messages.log를 봐야 함
+POD=$(oc get pods -n mas-inst1-manage -o name | grep -- '-all-' | head -1)
+oc exec -n mas-inst1-manage "${POD#pod/}" -c all -- tail -30 /logs/messages.log
+```
+
+기동 완료 표식(4번): `CWWKF0011I: The defaultServer server is ready to run a smarter planet.`
+
+전체 완료 판정은 `ManageWorkspace` 조건으로 봅니다.
+
+```bash
+oc get manageworkspace inst1-ws1 -n mas-inst1-manage \
+  -o jsonpath='{range .status.conditions[*]}{.type}: {.status} — {.message}{"\n"}{end}'
+```
+
+더 자세한 Pod 역할·명령은 [OCP_COMMAND.md §16~17](OCP_COMMAND.md#16-이미지-빌드-manage)을 참고하세요.
+
 웹 콘솔이 더 보기 편합니다 — `mas install`이 마지막에 URL을 출력합니다.
 
 ```
@@ -3505,66 +3549,29 @@ oc get route -A | grep -E 'admin|mas'
 
 **범위** — OCP·MAS Core·MongoDB·미러 레지스트리·스토리지는 그대로 두고 **Manage와 Db2만** 지웁니다.
 
-**0) 실행 — 한 번에 정리** (아래 1)~5)를 합친 것)
-
-```bash
-# A) Manage 제거
-oc delete pipelinerun --all -n mas-inst1-pipelines --wait=false
-oc delete manageworkspace --all -n mas-inst1-manage --wait=false
-oc delete manageapp --all -n mas-inst1-manage --wait=false
-sleep 30
-for r in manageworkspace manageapp; do
-  for n in $(oc get $r -n mas-inst1-manage -o name 2>/dev/null); do
-    oc patch $n -n mas-inst1-manage --type=merge -p '{"metadata":{"finalizers":null}}'
-  done
-done
-
-# B) Manage 잔여물 제거
-oc delete build,bc,is --all -n mas-inst1-manage --wait=false
-oc delete cm,secret -n mas-inst1-manage -l mas.ibm.com/instanceId=inst1 --wait=false
-oc delete deploy,statefulset -n mas-inst1-manage -l mas.ibm.com/instanceId=inst1 --wait=false
-
-# C) Db2 제거 — ConfigMap까지 반드시
-oc delete db2ucluster --all -n db2u --wait=false
-sleep 10
-for n in $(oc get db2ucluster -n db2u -o name 2>/dev/null); do
-  oc patch $n -n db2u --type=merge -p '{"metadata":{"finalizers":null}}'
-done
-oc delete statefulset,deploy,job,cronjob -n db2u -l app=mas-inst1-ws1-manage --wait=false
-oc delete pvc --all -n db2u --wait=false
-oc delete cm mas-inst1-ws1-manage-enforce-config -n db2u --ignore-not-found
-oc delete cm,secret -n db2u -l app=mas-inst1-ws1-manage --ignore-not-found
-oc delete route --all -n db2u --ignore-not-found
-
-# D) 확인
-sleep 20
-echo "=== db2u ==="; oc get db2ucluster,pods,pvc,cm -n db2u
-echo "=== manage ==="; oc get manageworkspace,manageapp,build,bc,is -n mas-inst1-manage
-echo "=== nfs ==="; ls /export/mas-rwx/
-```
-
-`db2u`에 오퍼레이터 2개만 남고 PVC가 없으면 정리 완료입니다. 이후 §3.10.3을 다시 실행합니다.
-
-아래는 단계별 설명입니다.
-
 **1) 실행 — 파이프라인 정리**
 
 ```bash
-oc delete pipelinerun --all -n mas-inst1-pipelines
+oc delete pipelinerun --all -n mas-inst1-pipelines --wait=false
 ```
 
 **2) 실행 — Manage 워크스페이스·애플리케이션 제거**
 
 ```bash
-oc delete manageworkspace --all -n mas-inst1-manage
-oc delete manageapp --all -n mas-inst1-manage
+oc delete manageworkspace --all -n mas-inst1-manage --wait=false
+oc delete manageapp --all -n mas-inst1-manage --wait=false
+sleep 30
 ```
 
-finalizer로 멈추면 다른 터미널에서 확인하고, 필요하면 제거합니다.
+finalizer 때문에 30초 뒤에도 남아 있으면 직접 제거합니다.
 
 ```bash
-oc get manageworkspace -A
-oc patch manageworkspace <이름> -n mas-inst1-manage --type=merge -p '{"metadata":{"finalizers":null}}'
+oc get manageworkspace,manageapp -n mas-inst1-manage
+for r in manageworkspace manageapp; do
+  for n in $(oc get $r -n mas-inst1-manage -o name 2>/dev/null); do
+    oc patch $n -n mas-inst1-manage --type=merge -p '{"metadata":{"finalizers":null}}'
+  done
+done
 ```
 
 **3) 실행 — Manage 잔여물 제거**
@@ -3572,30 +3579,47 @@ oc patch manageworkspace <이름> -n mas-inst1-manage --type=merge -p '{"metadat
 빌드·이미지스트림·설정이 남으면 다음 설치가 옛 값을 재사용합니다.
 
 ```bash
-oc delete build --all -n mas-inst1-manage
-oc delete bc --all -n mas-inst1-manage
-oc delete is --all -n mas-inst1-manage
-oc delete cm -n mas-inst1-manage -l mas.ibm.com/instanceId=inst1
-oc delete deploy,statefulset -n mas-inst1-manage -l mas.ibm.com/instanceId=inst1
+oc delete build,bc,is --all -n mas-inst1-manage --wait=false
+oc delete cm,secret -n mas-inst1-manage -l mas.ibm.com/instanceId=inst1 --wait=false
+oc delete deploy,statefulset -n mas-inst1-manage -l mas.ibm.com/instanceId=inst1 --wait=false
 ```
 
 **4) 실행 — Db2 제거**
 
 🔴 **ConfigMap과 Secret까지 지워야 합니다.** Db2uCluster와 PVC만 지우면 다음 설치가 설정 단계를 건너뜁니다.
 
+🔴 **반드시 라벨(`-l app=mas-inst1-ws1-manage`)로 범위를 좁혀서 지우세요.** `--all`로 지우면 `db2u-operator-manager`, `db2u-day2-ops-controller-manager` 오퍼레이터 Deployment까지 같이 삭제됩니다.
+
 ```bash
-oc delete db2ucluster --all -n db2u
-oc delete statefulset,deploy,job,cronjob --all -n db2u --ignore-not-found
-oc delete pvc --all -n db2u
-oc delete cm --all -n db2u --ignore-not-found
-oc delete secret -n db2u -l app=mas-inst1-ws1-manage --ignore-not-found
+oc delete db2ucluster --all -n db2u --wait=false
+sleep 10
 ```
 
-⚠️ `db2u-operator-manager`와 `db2u-day2-ops-controller-manager`는 남겨둡니다. 위 명령이 이들의 Deployment도 지우므로, 오퍼레이터가 스스로 복구하는지 확인하고 안 되면 OLM이 재생성하도록 CSV를 확인하세요.
+finalizer 때문에 안 지워지면 직접 제거합니다.
+
+```bash
+for n in $(oc get db2ucluster -n db2u -o name 2>/dev/null); do
+  oc patch $n -n db2u --type=merge -p '{"metadata":{"finalizers":null}}'
+done
+```
+
+```bash
+oc delete statefulset,deploy,job,cronjob -n db2u -l app=mas-inst1-ws1-manage --wait=false
+oc delete pvc --all -n db2u --wait=false
+oc delete cm mas-inst1-ws1-manage-enforce-config -n db2u --ignore-not-found
+oc delete cm,secret -n db2u -l app=mas-inst1-ws1-manage --ignore-not-found
+oc delete route --all -n db2u --ignore-not-found
+```
+
+🔴 **`mas-inst1-ws1-manage-enforce-config`는 라벨이 없어 위 라벨 삭제로는 지워지지 않으므로 이름으로 직접 지워야 합니다.** 이 절 맨 위의 🔴 경고(파이프라인이 스킵되며 멈춘 사고)가 바로 이 ConfigMap을 빠뜨렸을 때 일어났습니다.
 
 **5) 확인 및 검증**
 
-검증 : `db2u`에 오퍼레이터만 남고 PVC·ConfigMap이 없어야 합니다
+```bash
+sleep 20
+```
+
+검증 : `db2u`에 오퍼레이터 2개(`db2u-operator-manager`, `db2u-day2-ops-controller-manager`)만 남고 PVC·ConfigMap이 없어야 합니다
 
 ```bash
 oc get db2ucluster,pods,pvc,cm -n db2u
