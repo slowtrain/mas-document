@@ -4,12 +4,70 @@
 
 **최종 갱신**: 2026-08-06
 
+## 다음에 할 일 (2026-08-07 19:15 기준)
+
+`mas install` 재실행(`inst1-install-260807-0848`)이 진행 중입니다. **Manage 이미지 빌드 → maxinst → 서버 배포**만 남았고, 클러스터 안에서 자동으로 돕니다.
+
+**1) 현재 상태 확인**
+
+```bash
+export KUBECONFIG=~/ocp-sno/auth/kubeconfig
+oc get pipelinerun -n mas-inst1-pipelines
+oc get manageworkspace -A
+oc get build -n mas-inst1-manage
+oc get pods -n mas-inst1-manage | grep -E 'maxinst|-all-'
+```
+
+| 보이는 것 | 의미 |
+|---|---|
+| PipelineRun `Succeeded` + ManageWorkspace `Ready` + `inst1-ws1-all` `2/2 Running` | **완료** → 2)로 |
+| `admin-build-config` / `all-build-config` 가 `Running` 또는 `Complete` | 정상 진행 중 — 기다리기 |
+| `inst1-ws1-manage-maxinst-*` `Running` | DB 스키마 + 데모 데이터 적재 중 (90분~2시간) |
+| 빌드가 생겼다 사라지기를 반복 | 오퍼레이터 Pod을 지워 재시작 (아래) |
+| PipelineRun `False` | 실패한 Task 확인 후 §3.10.5로 초기화 → §3.10.3 재실행 |
+
+빌드가 1분 만에 사라지는 현상이 반복되면 오퍼레이터를 재시작합니다. **`oc rollout restart`는 OLM이 되돌리므로 Pod을 직접 지웁니다.**
+
+```bash
+oc delete pod -n mas-inst1-manage -l app.kubernetes.io/name=ibm-mas-manage
+```
+
+**2) 완료 후 확인**
+
+```bash
+# 설정이 의도대로 들어갔는지
+oc get manageworkspace inst1-ws1 -n mas-inst1-manage -o jsonpath='{.spec.settings}' | jq
+```
+
+기대값 — `secondaryLangs: ["KO"]` / `demodata: true` / `serverTimezone: "Asia/Seoul"` / `db2Vargraphic: true`
+
+```bash
+# 접속 주소 (hosts 등록 필요, SERVER_INFO.md 참고)
+oc get route -n mas-inst1-manage
+```
+
+`https://ws1.manage.inst1.apps.mas-it.itmsg.co.kr` 로그인 후 확인할 것.
+
+- [ ] Maximo IT 메뉴 (Service Desk / Incident / Problem / Service Request)
+- [ ] 사용자 프로필에서 한국어 전환
+- [ ] 자산·작업오더에 데모 데이터
+- [ ] 레코드 시각이 한국 시각인지
+
+**3) 남은 작업**
+
+- [ ] 정식 관리자 계정 생성 (Superuser는 랜덤 생성값, 초기 구성 전용)
+- [ ] Db2 라이선스 — 평가판 90일. IBM에 활성화 키 확인
+- [ ] `inst1-mcp` Pod이 `0/1`로 남아 있으면 원인 확인 (startup probe 503)
+- [ ] 사내 DNS·사내 CA 확인 (§3.12.2 — 없으면 사용자 접속 불가)
+
+---
+
 ## 요약
 
 | 단계 | 상태 |
 |---|---|
 | §2 사전준비 (인터넷 연결 서버) | ✅ **완료** — tar 조각 25개 준비됨, FileZilla 반출 대기 |
-| §3 설치 (사이트 Bastion) | 🔄 **§3.6 진행 중** — Red Hat push 완료, MAS push 진행 중 |
+| §3 설치 (사이트 Bastion) | 🔄 **§3.10 진행 중** — Core 완료, Manage 빌드·maxinst 남음 |
 
 ## §2 사전준비 — 완료
 
