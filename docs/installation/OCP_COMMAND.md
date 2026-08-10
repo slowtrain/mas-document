@@ -1,6 +1,6 @@
 # OpenShift / MAS 운영 명령어
 
-이번 배포(`mas-it.itmsg.co.kr`, SNO 단일 노드) 기준입니다. 설치 절차는 [OFFLINE_INSTALL.md](OFFLINE_INSTALL.md), 서버·계정 정보는 [SERVER_INFO.md](SERVER_INFO.md)를 보세요.
+이번 배포(`mas-it.itmsg.co.kr`, SNO 단일 노드) 기준입니다. 설치 절차는 [OFFLINE_INSTALL.md](OFFLINE_INSTALL.md), 서버 정보는 [SERVER_INFO.md](SERVER_INFO.md), 접속 주소·계정은 [ACCESS.md](ACCESS.md)를 보세요.
 
 <details>
 <summary><b>목차</b></summary>
@@ -286,7 +286,7 @@ oc describe node mas-it-sno | grep -A8 'Allocated resources'
 ssh -i ~/.ssh/quay_installer core@192.168.2.211
 ```
 
-**노드 종료·재시작**은 [OFFLINE_INSTALL.md §3.12.4](OFFLINE_INSTALL.md)를 따르세요. 🔴 **Db2를 먼저 정지하지 않으면 데이터베이스가 손상됩니다.**
+**노드 종료·재시작**은 [OFFLINE_INSTALL.md §3.11.6](OFFLINE_INSTALL.md)를 따르세요. 🔴 **Db2를 먼저 정지하지 않으면 데이터베이스가 손상됩니다.**
 
 `oc debug`는 `registry.redhat.io/rhel9/support-tools`를 받아오므로 IDMS가 적용된 뒤에만 동작합니다.
 
@@ -307,7 +307,7 @@ oc get svc -n <ns>
 **`hosts` 파일에 넣을 줄을 통째로 생성**합니다.
 
 ```bash
-oc get route -A -o jsonpath='{range .items[*]}192.168.2.211    {.spec.host}{"\n"}{end}' | sort -u
+oc get route -A -o jsonpath='{range .items[*]}192.168.2.211    {.spec.host}{"\n"}{end}' | awk 'NF==2' | sort -u
 ```
 
 MAS 주소만 봅니다.
@@ -397,7 +397,7 @@ oc get idms <이름> -o yaml
 | `idms-release-0` / `idms-operator-0` | §3.8.1 `oc mirror` 산출물 |
 | `mas-ibm-catalog` | §3.8.2 `mas configure-airgap` |
 
-🔴 **노드에 실제로 반영됐는지는 registries.conf로 확인해야 합니다.** IDMS 오브젝트가 있어도 MCO가 렌더링에 실패하면 반영되지 않습니다(OFFLINE_INSTALL.md §4.7).
+🔴 **노드에 실제로 반영됐는지는 registries.conf로 확인해야 합니다.** IDMS 오브젝트가 있어도 MCO가 렌더링에 실패하면 반영되지 않습니다([TROUBLE_SHOOTING.md 7](TROUBLE_SHOOTING.md)).
 
 ```bash
 ssh -i ~/.ssh/quay_installer core@192.168.2.211 'grep -c "^\[\[registry\]\]" /etc/containers/registries.conf'
@@ -585,6 +585,30 @@ oc get pvc -n openshift-image-registry
 
 ## 17. Manage 서버 로그
 
+**Maximo 로그 실시간 확인** — 이 한 줄이면 됩니다.
+
+```bash
+oc rsh -n mas-inst1-manage deploy/inst1-ws1-all tail -f /logs/messages.log
+```
+
+자주 쓰면 alias를 걸어두세요.
+
+```bash
+echo "alias maslog='oc rsh -n mas-inst1-manage deploy/inst1-ws1-all tail -f /logs/messages.log'" >> ~/.bashrc
+source ~/.bashrc
+```
+
+로그 파일 목록과 마지막 부분만 볼 때입니다.
+
+```bash
+oc rsh -n mas-inst1-manage deploy/inst1-ws1-all ls -la /logs/
+oc rsh -n mas-inst1-manage deploy/inst1-ws1-all tail -100 /logs/messages.log
+```
+
+---
+
+아래는 Pod을 직접 다뤄야 할 때의 상세입니다.
+
 Manage 관련 Pod은 역할이 나뉩니다.
 
 | Pod 이름 | 역할 |
@@ -657,7 +681,7 @@ DB 스키마 생성 진행 상황(최초 배포 시)입니다.
 oc logs -n mas-inst1-manage deploy/inst1-ws1-manage-maxinst -f --tail=20
 ```
 
-⚠️ 로그 시각은 `serverTimezone` 설정을 따릅니다. 이번 배포는 `GMT`로 들어가 한국 시각과 9시간 차이가 납니다.
+로그 시각은 `serverTimezone` 설정을 따릅니다. 이번 배포는 `Asia/Seoul`이라 한국 시각으로 찍힙니다.
 
 ---
 

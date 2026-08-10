@@ -2,6 +2,8 @@
 
 IBM MAS CLI 공식 문서(`ibm-mas.github.io/cli`)와 Red Hat OpenShift 공식 문서를 근거로 작성한 Maximo IT 오프라인 설치 가이드입니다.
 
+막혔을 때는 [TROUBLE_SHOOTING.md](TROUBLE_SHOOTING.md), 운영 명령은 [OCP_COMMAND.md](OCP_COMMAND.md), 서버 정보는 [SERVER_INFO.md](SERVER_INFO.md), 접속 주소·계정은 [ACCESS.md](ACCESS.md)를 보세요.
+
 <details>
 <summary><b>목차</b></summary>
 
@@ -89,25 +91,27 @@ IBM MAS CLI 공식 문서(`ibm-mas.github.io/cli`)와 Red Hat OpenShift 공식 �
     - [3.10.3 실행 — 비대화형 (권장)](#3103-실행--비대화형-권장)
     - [3.10.4 확인 및 검증](#3104-확인-및-검증)
     - [3.10.5 실패 시 초기화 — Manage 재설치](#3105-실패-시-초기화--manage-재설치)
-  - [3.11 Manage + Maximo IT 확인 (웹 UI)](#311-manage--maximo-it-확인-웹-ui)
-    - [3.11.1 확인 및 검증](#3111-확인-및-검증)
-    - [3.11.2 웹 UI 확인](#3112-웹-ui-확인)
-    - [3.11.3 설치 후 작업](#3113-설치-후-작업)
-  - [3.12 설치 후 확인 (사용자 계정)](#312-설치-후-확인-사용자-계정)
-    - [3.12.1 실행 — 접속용 `hosts` 등록 (검증용)](#3121-실행--접속용-hosts-등록-검증용)
-    - [3.12.2 운영 전환 — DNS와 인증서](#3122-운영-전환--dns와-인증서)
+  - [3.11 Manage + Maximo IT 접속·확인 (웹 UI)](#311-manage--maximo-it-접속확인-웹-ui)
+    - [3.11.1 실행 — 접속용 `hosts` 등록 (검증용)](#3111-실행--접속용-hosts-등록-검증용)
+    - [3.11.2 실행 — 접속](#3112-실행--접속)
+    - [3.11.3 확인 및 검증](#3113-확인-및-검증)
+    - [3.11.4 설치 후 작업](#3114-설치-후-작업)
+    - [3.11.5 운영 전환 — DNS와 인증서](#3115-운영-전환--dns와-인증서)
+    - [3.11.6 노드 종료·재시작 절차](#3116-노드-종료재시작-절차)
+  - [3.12 데이터베이스(Db2) 접속 (사용자 계정)](#312-데이터베이스db2-접속-사용자-계정)
+    - [3.12.1 실행 — 접속 정보 확인](#3121-실행--접속-정보-확인)
+    - [3.12.2 실행 — 접속](#3122-실행--접속)
     - [3.12.3 확인 및 검증](#3123-확인-및-검증)
-    - [3.12.4 노드 종료·재시작 절차](#3124-노드-종료재시작-절차)
-- [4. 트러블슈팅](#4-트러블슈팅)
-  - [4.1 `:Z` vs `:z` SELinux 라벨 충돌](#41-z-vs-z-selinux-라벨-충돌)
-  - [4.2 MAS 콘텐츠 미러링 중 `cp.icr.io` OAuth 토큰 타임아웃](#42-mas-콘텐츠-미러링-중-cpicrio-oauth-토큰-타임아웃)
-  - [4.3 Red Hat 콘텐츠 미러링 — 타임아웃과 캐시 소실](#43-red-hat-콘텐츠-미러링--타임아웃과-캐시-소실)
-  - [4.4 SSH 접속을 끊으면 미러링 컨테이너가 죽음](#44-ssh-접속을-끊으면-미러링-컨테이너가-죽음)
-  - [4.5 `mas mirror-redhat-images --mode from-filesystem` 을 쓰지 않는 이유](#45-mas-mirror-redhat-images---mode-from-filesystem-을-쓰지-않는-이유)
-  - [4.6 `install-config.yaml` 검증 실패 — `imageDigestSources`](#46-install-configyaml-검증-실패--imagedigestsources)
-  - [4.7 MCO가 `registries.conf`를 렌더링하지 못함 — `conflicting mirrorSourcePolicy`](#47-mco가-registriesconf를-렌더링하지-못함--conflicting-mirrorsourcepolicy)
 
 </details>
+
+
+
+
+
+
+
+
 
 
 
@@ -128,6 +132,36 @@ IBM MAS CLI 공식 문서(`ibm-mas.github.io/cli`)와 Red Hat OpenShift 공식 �
 ---
 
 ## 1. 설치 요약 및 흐름
+
+```
+1. 사전 준비 — [인터넷 연결 RHEL 서버]                            §2
+   - 라이선스·Pull Secret·설치 도구·RPM 확보
+   - Red Hat 콘텐츠 미러링   : oc mirror         (to-filesystem)
+   - MAS 콘텐츠 미러링       : mas mirror-images (to-filesystem)
+   - tar 분할 생성
+        |
+        v  전송매체로 반입
+2. 반입 및 기반 구성 — [Bastion]                                  §3.1 ~ §3.7
+   - tar 반입 · 복원
+   - RPM 저장소 등록 · 도구 설치
+   - DNS(dnsmasq) · NTP(chrony)
+   - Mirror Registry(Quay) 구축
+   - 반입 이미지를 Registry로 Push (from-filesystem)
+   - NFS 서버 (RWX 제공)
+   - SNO 설치 ISO 생성 → [SNO 노드] 부팅 · OpenShift 설치
+        |
+        v
+3. MAS 설치 — [Bastion에서 클러스터 대상으로]                      §3.8 ~ §3.10
+   - Airgap 구성 : IDMS 적용 + mas configure-airgap
+   - 스토리지 준비 : LVMS(RWO) · NFS 프로비저너(RWX) · 내부 Image Registry
+   - mas install 실행 (비대화형)
+        |
+        v
+   [SNO 노드] MAS Core + Manage + Maximo IT                       §3.11
+              Db2 전용 인스턴스 · MongoDB · SLS · DRO
+```
+
+🔴 **Airgap 구성과 스토리지 준비는 SNO가 올라온 뒤에 실행합니다.** 건너뛰면 `mas install`이 실패합니다 — IDMS가 노드에 반영돼야 미러에서 이미지를 받고, RWO·RWX StorageClass 두 개와 `Managed` 상태의 내부 Image Registry가 있어야 Manage가 이미지를 빌드할 수 있습니다.
 
 ### 1.1 설치 구성
 
@@ -268,7 +302,7 @@ Bastion 서버로 옮기기 위한 설치 파일 및 이미지를 확보하기 �
 | 캐시 삭제 후 | 398GB |
 | 9번 완료 | 489GB |
 
-⚠️ 순서를 바꿔 9번을 먼저 하면 피크가 **841GB**가 됩니다(실측). 디스크 사용률이 90%에 가까워지면 캐시 쓰기가 지연되어 §4.3의 타임아웃이 재발합니다.
+⚠️ 순서를 바꿔 9번을 먼저 하면 피크가 **841GB**가 됩니다(실측). 디스크 사용률이 90%에 가까워지면 캐시 쓰기가 지연되어 [TROUBLE_SHOOTING.md 3](TROUBLE_SHOOTING.md)의 타임아웃이 재발합니다.
 
 **사이트 Bastion — 1.5TB 이상**
 
@@ -599,9 +633,9 @@ grep -ohP 'Operators: \[\K[^\]]+' ~/mas-install/mirror/redhat/working-dir/logs/*
 ls -lh ~/mas-install/mirror/redhat/mirror_*.tar      # 실측 373GB
 ```
 
-⚠️ 로그가 이미지 복사 도중 끊기고 `container not running: No such process`로 끝났다면 **SSH 세션 종료로 컨테이너가 죽은 것**입니다(§4.4).
+⚠️ 로그가 이미지 복사 도중 끊기고 `container not running: No such process`로 끝났다면 **SSH 세션 종료로 컨테이너가 죽은 것**입니다([TROUBLE_SHOOTING.md 4](TROUBLE_SHOOTING.md)).
 
-실패했으면 **2)를 그대로 다시 실행**합니다 — 캐시에 있는 것은 건너뜁니다(§4.3 참고). 성공 후 캐시는 삭제합니다.
+실패했으면 **2)를 그대로 다시 실행**합니다 — 캐시에 있는 것은 건너뜁니다([TROUBLE_SHOOTING.md 3](TROUBLE_SHOOTING.md) 참고). 성공 후 캐시는 삭제합니다.
 
 ```bash
 rm -rf ~/mas-install/oc-mirror-cache
@@ -609,7 +643,7 @@ rm -rf ~/mas-install/oc-mirror-cache
 
 #### 9. MAS 콘텐츠 이미지 세트
 
-Catalog/Core, Manage + Maximo IT, 공통 의존성 + Db2, CLI를 **순차 미러링**합니다. 앞 단계 완료를 확인한 뒤 다음을 실행하세요 — 동시 실행하면 SELinux 라벨이 충돌합니다(§4.1).
+Catalog/Core, Manage + Maximo IT, 공통 의존성 + Db2, CLI를 **순차 미러링**합니다. 앞 단계 완료를 확인한 뒤 다음을 실행하세요 — 동시 실행하면 SELinux 라벨이 충돌합니다([TROUBLE_SHOOTING.md 1](TROUBLE_SHOOTING.md)).
 
 ⛔ **Cloud Pak for Data는 받지 않습니다.** `--mirror-cp4d`, `--mirror-wsl`, `--mirror-wml`, `--mirror-spark`, `--mirror-cognos`를 어떤 명령에도 넣지 마세요 — 이번 구성에 불필요하고 용량이 매우 큽니다. `--mirror-odf`도 제외합니다 — ODF 오퍼레이터는 8번(Red Hat 콘텐츠)에 이미 포함되어 있습니다.
 
@@ -1442,7 +1476,7 @@ systemctl --user restart quay-app
 journalctl --user -u quay-app -f
 ```
 
-재부팅 후에도 자동 기동하는 것은 설치 프로그램이 마지막에 실행한 `loginctl enable-linger` 덕분입니다 — 없으면 로그아웃과 함께 내려갑니다(§4.4).
+재부팅 후에도 자동 기동하는 것은 설치 프로그램이 마지막에 실행한 `loginctl enable-linger` 덕분입니다 — 없으면 로그아웃과 함께 내려갑니다([TROUBLE_SHOOTING.md 4](TROUBLE_SHOOTING.md)).
 
 | 데이터 | 경로 |
 |---|---|
@@ -1461,7 +1495,7 @@ journalctl --user -u quay-app -f
 | Red Hat | `oc mirror --v2` (§2.3 8번) | `mirror_000001.tar` + `working-dir` | 3) IBM 래퍼 → 실패 시 §3.6.4 `oc mirror` 직접 |
 | MAS | `mas mirror-images` (`oc image mirror` 기반) | 디렉터리 트리 | 4) `mas mirror-images` 래퍼 |
 
-⚠️ Red Hat 콘텐츠는 CLI 23.4.1에서 **IBM 래퍼가 동작하지 않습니다.** 래퍼가 `--from` 에 **tar 파일 경로**를 넘기는데 이건 oc-mirror v1 문법이고, v2는 `--from file://<디렉터리>` 를 받아 그 안의 `mirror_*.tar` 를 스스로 찾습니다(§4.5). §3.6.3으로 먼저 확인한 뒤 §3.6.4로 넘어가는 순서로 적어두었습니다 — CLI 버전이 올라가면 §3.6.3만으로 끝날 수 있습니다.
+⚠️ Red Hat 콘텐츠는 CLI 23.4.1에서 **IBM 래퍼가 동작하지 않습니다.** 래퍼가 `--from` 에 **tar 파일 경로**를 넘기는데 이건 oc-mirror v1 문법이고, v2는 `--from file://<디렉터리>` 를 받아 그 안의 `mirror_*.tar` 를 스스로 찾습니다([TROUBLE_SHOOTING.md 5](TROUBLE_SHOOTING.md)). §3.6.3으로 먼저 확인한 뒤 §3.6.4로 넘어가는 순서로 적어두었습니다 — CLI 버전이 올라가면 §3.6.3만으로 끝날 수 있습니다.
 
 #### 3.6.1 실행 — 환경변수
 
@@ -1539,7 +1573,7 @@ Red Hat Pull Secret은 push에 쓸 일이 없는데도 요구합니다 — `dire
 tail -20 ~/mas-install/mirror/redhat/logs/mirror-from-filesystem-ocp4.20.log
 ```
 
-🔴 **CLI 23.4.1에서는 아래처럼 실패합니다** — 실측 결과입니다(§4.5).
+🔴 **CLI 23.4.1에서는 아래처럼 실패합니다** — 실측 결과입니다([TROUBLE_SHOOTING.md 5](TROUBLE_SHOOTING.md)).
 
 ```
 [INFO]  : 🔀 workflow mode: diskToMirror
@@ -1582,8 +1616,8 @@ disown
 |---|---|
 | `--network host` | Bastion의 `/etc/resolv.conf`가 `127.0.0.1`(dnsmasq)을 가리킵니다. 컨테이너 네트워크에서는 그 주소가 컨테이너 자신이라 Registry 이름 해석이 실패합니다 |
 | `--dest-tls-verify=false` | Quay 자체 서명 인증서. 컨테이너 안에는 §3.5.4의 CA가 없습니다 |
-| `--cache-dir /mnt/cache` | 지정하지 않으면 컨테이너 내부 `$HOME`에 쌓이고 `--rm`과 함께 사라집니다(§4.3) |
-| `--image-timeout 60m` | 기본 10분으로는 대용량 이미지가 초과합니다(§4.3) |
+| `--cache-dir /mnt/cache` | 지정하지 않으면 컨테이너 내부 `$HOME`에 쌓이고 `--rm`과 함께 사라집니다([TROUBLE_SHOOTING.md 3](TROUBLE_SHOOTING.md)) |
+| `--image-timeout 60m` | 기본 10분으로는 대용량 이미지가 초과합니다([TROUBLE_SHOOTING.md 3](TROUBLE_SHOOTING.md)) |
 
 진행 확인 : 프로세스가 `1`이고 용량이 늘어야 함. 프로세스가 `0`이면 끝난 것입니다
 
@@ -1623,7 +1657,7 @@ df -h /
 
 #### 3.6.5 실행 — MAS 콘텐츠 push : core
 
-반입한 4개 디렉터리를 **순차로** 올립니다. 앞 단계의 `[FAILURE]` 0건을 확인한 뒤 다음으로 넘어가세요 — 동시에 실행하면 SELinux 라벨이 충돌합니다(§4.1).
+반입한 4개 디렉터리를 **순차로** 올립니다. 앞 단계의 `[FAILURE]` 0건을 확인한 뒤 다음으로 넘어가세요 — 동시에 실행하면 SELinux 라벨이 충돌합니다([TROUBLE_SHOOTING.md 1](TROUBLE_SHOOTING.md)).
 
 `--network host`가 필요한 이유는 §3.6.4와 같습니다. 컨테이너 기본 네트워크에서는 `127.0.0.1`을 가리키는 Bastion의 resolv.conf로 Registry 이름을 해석할 수 없습니다.
 
@@ -2383,7 +2417,7 @@ MachineConfig 롤아웃으로 노드가 재부팅하면 `oc`가 잠시 실패합
 | `idms-operator-0` | 기본값 (`AllowContactingSource`) |
 | `mas-ibm-catalog` | `NeverContactSource` |
 
-충돌하면 MCO가 **registries.conf 전체 렌더링을 중단**해서 `mas-ibm-catalog`의 매핑이 하나도 반영되지 않습니다(§4.7). 오브젝트는 정상으로 보이고 `oc get mcp`도 `UPDATED=True`라 그냥 넘어가기 쉽습니다.
+충돌하면 MCO가 **registries.conf 전체 렌더링을 중단**해서 `mas-ibm-catalog`의 매핑이 하나도 반영되지 않습니다([TROUBLE_SHOOTING.md 7](TROUBLE_SHOOTING.md)). 오브젝트는 정상으로 보이고 `oc get mcp`도 `UPDATED=True`라 그냥 넘어가기 쉽습니다.
 
 ```bash
 IDX=$(oc get idms idms-operator-0 -o json | \
@@ -2412,7 +2446,7 @@ watch -n 20 'date; oc get mc --sort-by=.metadata.creationTimestamp | tail -2; ec
 
 **5) 확인 및 검증**
 
-🔴 **`oc get mcp`가 `UPDATED=True`인 것만으로는 판정할 수 없습니다.** MCO가 새 설정을 **만들지 못하면** 갱신할 것이 없어 그대로 `UPDATED=True`로 보입니다. 실제로 이번 배포에서 그렇게 통과 판정이 났고, MAS 설치 단계에 가서야 드러났습니다(§4.7).
+🔴 **`oc get mcp`가 `UPDATED=True`인 것만으로는 판정할 수 없습니다.** MCO가 새 설정을 **만들지 못하면** 갱신할 것이 없어 그대로 `UPDATED=True`로 보입니다. 실제로 이번 배포에서 그렇게 통과 판정이 났고, MAS 설치 단계에 가서야 드러났습니다([TROUBLE_SHOOTING.md 7](TROUBLE_SHOOTING.md)).
 
 검증 : 노드의 `registries.conf` 항목이 §3.8.1 때보다 **늘어야** 합니다 (34 → 43)
 
@@ -2433,7 +2467,7 @@ oc get mcp
 oc logs -n openshift-machine-config-operator deploy/machine-config-controller --tail=20 | grep -i error
 ```
 
-`conflicting mirrorSourcePolicy` 오류가 보이면 §4.7로 가세요.
+`conflicting mirrorSourcePolicy` 오류가 보이면 [TROUBLE_SHOOTING.md 7](TROUBLE_SHOOTING.md)로 가세요.
 
 검증 : IDMS에 **`mas-ibm-catalog`** 가 추가돼 있어야 합니다 — 이 명령이 만든 것입니다
 
@@ -3512,16 +3546,66 @@ oc get route -n mas-inst1-core
 
 #### 3.10.4 확인 및 검증
 
-검증 : Suite가 생성되고 `Ready` 상태여야 합니다
+파이프라인이 끝난 뒤 CLI로 확인하는 항목입니다. 웹 UI 확인은 §3.11입니다.
+
+검증 : 파이프라인이 `Succeeded` 로 끝나야 합니다
 
 ```bash
-oc get suite -A
+oc get pipelinerun -n mas-inst1-pipelines
 ```
 
-검증 : Core 네임스페이스에 비정상 Pod이 없어야 합니다 (헤더만 남으면 정상)
+실패했으면 어느 Task에서 멈췄는지 봅니다.
+
+```bash
+oc get taskrun -n mas-inst1-pipelines --sort-by=.metadata.creationTimestamp | grep -v Succeeded
+```
+
+검증 : Suite와 Manage 워크스페이스가 모두 `Ready` 여야 합니다
+
+```bash
+oc get suite,manageapp,manageworkspace -A
+```
+
+검증 : Maximo IT(`icd`)가 컴포넌트에 들어 있어야 합니다
+
+```bash
+oc get manageworkspace inst1-ws1 -n mas-inst1-manage -o jsonpath='{.spec.components}{"\n"}'
+```
+
+```
+{"base":{"version":"latest"},"icd":{"version":"latest"}}
+```
+
+검증 : 언어·데모 데이터·타임존이 의도대로 들어갔는지 — **§3.10.3에서 넘긴 플래그가 반영됐는지 확인하는 지점입니다**
+
+```bash
+oc get manageworkspace inst1-ws1 -n mas-inst1-manage -o jsonpath='{.spec.settings}' | jq
+```
+
+| 항목 | 기대값 |
+|---|---|
+| `languages.baseLang` / `secondaryLangs` | `EN` / `["KO"]` |
+| `db.maxinst.demodata` | `true` |
+| `db.maxinst.db2Vargraphic` | `true` (기본값) |
+| `deployment.serverTimezone` | `Asia/Seoul` |
+
+검증 : 비정상 Pod이 없어야 합니다 (헤더만 남으면 정상)
 
 ```bash
 oc get pods -n mas-inst1-core | grep -vE 'Running|Completed'
+oc get pods -n mas-inst1-manage | grep -vE 'Running|Completed'
+```
+
+검증 : Maximo 서버가 `2/2 Running` 이어야 합니다
+
+```bash
+oc get pods -n mas-inst1-manage | grep -- '-all-'
+```
+
+검증 : Db2가 `Ready` 여야 합니다
+
+```bash
+oc get db2ucluster -n db2u
 ```
 
 검증 : IBM Maximo Operator Catalog가 생성돼야 합니다 — `mas install`이 만듭니다
@@ -3531,17 +3615,25 @@ oc get catalogsource -n openshift-marketplace
 oc get subscriptions -A | grep -i ibm
 ```
 
-검증 : Suite Administration Route가 있어야 합니다 — §3.11에서 이 주소로 접속합니다
+검증 : Route가 만들어져야 합니다. **Manage 주소는 워크스페이스 ID가 앞에 붙습니다**
 
 ```bash
-oc get route -A | grep -E 'admin|mas'
+oc get route -n mas-inst1-core
+oc get route -n mas-inst1-manage
 ```
 
-🔴 노트북에서 접속하려면 `hosts`에 해당 이름을 추가해야 합니다 — `*.apps` 와일드카드는 hosts 파일이 지원하지 않습니다.
+| Route | 용도 |
+|---|---|
+| `admin.inst1.apps.…` | Suite Administration |
+| `home.inst1.apps.…` | MAS 홈 |
+| `api.inst1.apps.…` / `auth.inst1.apps.…` | MAS API·인증 |
+| **`ws1.manage.inst1.apps.…`** | **Maximo Manage / Maximo IT 메인** |
+| `ws1-all.manage.inst1.apps.…` | `all` 서버 번들 직접 접근 |
+| `maxinst.manage.inst1.apps.…` | 관리 도구 (ERD, toolsapi) |
 
-```
-192.168.2.211    admin.inst1.apps.mas-it.itmsg.co.kr
-```
+⚠️ `manage.inst1.apps.…`(워크스페이스 ID 없는 주소)는 오퍼레이터가 먼저 만드는 Route이며 서비스되지 않습니다.
+
+🔴 웹 UI에 접속하려면 `hosts` 등록과 호스트별 인증서 수락이 필요합니다 — §3.11.1을 먼저 하세요.
 
 #### 3.10.5 실패 시 초기화 — Manage 재설치
 
@@ -3639,102 +3731,21 @@ ls /export/mas-rwx/
 
 정리가 끝나면 §3.10.3을 다시 실행합니다.
 
-### 3.11 Manage + Maximo IT 확인 (웹 UI)
+### 3.11 Manage + Maximo IT 접속·확인 (웹 UI)
 
 🔴 **별도의 활성화 작업은 필요 없습니다.** `mas install`이 Manage 배포와 Maximo IT(`icd`) 활성화, DB 스키마 생성(maxinst), 이미지 빌드까지 모두 수행합니다. Suite Administration에서 "Activate Manage"를 누를 일이 없습니다.
 
-#### 3.11.1 확인 및 검증
+CLI 검증은 §3.10.4에서 끝냈다는 전제입니다. 여기서는 접속 환경을 만들고 화면으로 확인합니다.
 
-검증 : 워크스페이스가 `Ready` 여야 합니다
+#### 3.11.1 실행 — 접속용 `hosts` 등록 (검증용)
 
-```bash
-oc get manageworkspace -A
-```
+⚠️ **이 절은 구축 담당자가 검증할 때 쓰는 방법입니다.** 사내 사용자에게 이렇게 배포할 수는 없습니다 — 운영 전환 방안은 §3.11.5를 보세요.
 
-검증 : Maximo IT(`icd`)가 컴포넌트에 들어 있어야 합니다
+폐쇄망에는 사내 DNS가 없고 Bastion의 dnsmasq는 클러스터 전용입니다. Router가 **호스트명으로 라우팅**하므로 IP로는 접속되지 않고, `*.apps` 와일드카드는 `hosts` 파일이 지원하지 않아 이름을 개별로 넣어야 합니다.
 
-```bash
-oc get manageworkspace inst1-ws1 -n mas-inst1-manage -o jsonpath='{.spec.components}{"\n"}'
-```
+**1) 실행 — 등록할 줄 생성**
 
-```
-{"base":{"version":"latest"},"icd":{"version":"latest"}}
-```
-
-검증 : 언어·데모 데이터·타임존이 의도대로 들어갔는지
-
-```bash
-oc get manageworkspace inst1-ws1 -n mas-inst1-manage -o jsonpath='{.spec.settings}' | jq
-```
-
-| 항목 | 기대값 |
-|---|---|
-| `languages.baseLang` / `secondaryLangs` | `EN` / `["KO"]` |
-| `db.maxinst.demodata` | `true` |
-| `db.maxinst.db2Vargraphic` | `true` (기본값) |
-| `deployment.serverTimezone` | `Asia/Seoul` |
-
-검증 : 서버 Pod이 `2/2 Running` 이어야 합니다
-
-```bash
-oc get pods -n mas-inst1-manage | grep -- '-all-'
-```
-
-검증 : 접속 주소는 **워크스페이스 ID가 앞에 붙습니다**
-
-```bash
-oc get route -n mas-inst1-manage
-```
-
-| Route | 용도 |
-|---|---|
-| **`ws1.manage.inst1.apps.…`** | **Maximo Manage / Maximo IT 메인** |
-| `ws1-all.manage.inst1.apps.…` | `all` 서버 번들 직접 접근 |
-| `maxinst.manage.inst1.apps.…` | 관리 도구 (ERD, toolsapi) |
-
-⚠️ `manage.inst1.apps.…`(워크스페이스 ID 없는 주소)는 오퍼레이터가 먼저 만드는 Route이며 서비스되지 않습니다.
-
-#### 3.11.2 웹 UI 확인
-
-1. `https://ws1.manage.inst1.apps.<cluster>.<domain>` 접속 — `hosts` 등록과 인증서 수락이 필요합니다(§3.12.1)
-2. §3.10.3에서 확인한 Superuser로 로그인
-3. **Service Desk / Incident / Problem / Service Request** 메뉴가 보이면 Maximo IT 정상
-4. 사용자 프로필에서 언어를 한국어로 전환해 확인
-5. 자산·작업오더 목록에 데모 데이터가 있는지 확인
-
-#### 3.11.3 설치 후 작업
-
-| 항목 | 내용 |
-|---|---|
-| **정식 관리자 계정 생성** | Superuser는 초기 구성 전용입니다. Suite Administration에서 담당자 계정을 만들고 이후로는 그것을 사용하세요 |
-| **AppPoints 할당** | ⬜ 라이선스에 Maximo IT용 AppPoints가 포함되어 있는지 확인 필요. MAS Entitlement와 Maximo IT Entitlement는 각각 필요합니다 |
-| 사용자·그룹 권한 | Maximo IT 애플리케이션별 권한 설정 |
-
-### 3.12 설치 후 확인 (사용자 계정)
-
-#### 3.12.1 실행 — 접속용 `hosts` 등록 (검증용)
-
-⚠️ **이 절은 구축 담당자가 검증할 때 쓰는 방법입니다.** 사내 사용자에게 이렇게 배포할 수는 없습니다 — 운영 전환 방안은 §3.12.3을 보세요.
-
-폐쇄망에는 사내 DNS가 없고, Bastion의 dnsmasq는 클러스터 전용입니다. **노트북·PC에서 웹 UI에 접속하려면 `hosts` 파일에 이름을 직접 넣어야 합니다** — `*.apps` 와일드카드는 hosts 파일이 지원하지 않아 개별 이름이 필요합니다.
-
-🔴 **호스트마다 인증서를 따로 수락해야 합니다.** 자체 서명이라 브라우저가 호스트별로 신뢰를 묻습니다. `admin.inst1…` 만 수락하면 Suite Administration이 **로딩 화면에서 멈춥니다** — `api.inst1…` 로 가는 XHR이 전부 차단되기 때문입니다(개발자 도구 Network에 `(failed)` 로 보임).
-
-새 탭에서 아래 주소를 하나씩 열어 "고급 → 계속"으로 수락하세요. 흰 화면이나 404가 떠도 무방합니다.
-
-```
-https://api.inst1.apps.<cluster-name>.<base-domain>
-https://auth.inst1.apps.<cluster-name>.<base-domain>
-https://home.inst1.apps.<cluster-name>.<base-domain>
-```
-
-MAS 루트 CA를 PC 신뢰 저장소에 넣으면 이 과정이 필요 없습니다.
-
-```bash
-oc get secret inst1-cert-public-ca -n mas-inst1-core -o jsonpath='{.data.ca\.crt}' | base64 -d > mas-root-ca.crt
-```
-
-Bastion에서 필요한 줄을 통째로 생성합니다.
+Bastion에서 실제 Route를 뽑습니다.
 
 ```bash
 export KUBECONFIG=~/ocp-sno/auth/kubeconfig
@@ -3743,32 +3754,200 @@ export KUBECONFIG=~/ocp-sno/auth/kubeconfig
   echo "192.168.2.210    registry.mas-it.itmsg.co.kr"
   echo "192.168.2.211    api.mas-it.itmsg.co.kr"
   oc get route -A -o jsonpath='{range .items[*]}192.168.2.211    {.spec.host}{"\n"}{end}'
-} | sort -u
+} | awk 'NF==2' | sort -u
 ```
 
-출력을 그대로 복사해 `hosts` 파일 끝에 붙여넣습니다.
+**2) 실행 — `hosts` 파일에 붙여넣기**
 
 | OS | 경로 |
 |---|---|
 | Windows | `C:\Windows\System32\drivers\etc\hosts` (관리자 권한) |
 | macOS / Linux | `/etc/hosts` (root) |
 
-주요 이름은 이렇습니다.
+묶음별로 나누고 각 줄에 용도를 주석으로 붙여두면 나중에 판단하기 쉽습니다. 안 쓰는 줄은 `#`으로 막아두고 필요할 때 풀면 됩니다.
 
-| 이름 | 용도 |
+```
+# ════════ MAS 사용자 접속 (필수) ════════
+# Suite Administration — 관리 콘솔
+192.168.2.211    admin.inst1.apps.mas-it.itmsg.co.kr
+# MAS API — 빠지면 화면이 로딩에서 멈춤
+192.168.2.211    api.inst1.apps.mas-it.itmsg.co.kr
+# 로그인 리다이렉트 — 빠지면 로그인 불가
+192.168.2.211    auth.inst1.apps.mas-it.itmsg.co.kr
+# MAS 홈 (애플리케이션 목록)
+192.168.2.211    home.inst1.apps.mas-it.itmsg.co.kr
+192.168.2.211    ws1.home.inst1.apps.mas-it.itmsg.co.kr
+# Maximo Manage / Maximo IT — 실제 업무 화면
+192.168.2.211    ws1.manage.inst1.apps.mas-it.itmsg.co.kr
+
+# ════════ OpenShift (관리자용) ════════
+# OCP API — 노트북에서 oc 명령 사용 시
+192.168.2.211    api.mas-it.itmsg.co.kr
+# OCP 웹 콘솔
+192.168.2.211    console-openshift-console.apps.mas-it.itmsg.co.kr
+# 콘솔 로그인 리다이렉트 — 빠지면 콘솔 로그인 불가
+192.168.2.211    oauth-openshift.apps.mas-it.itmsg.co.kr
+# oc / kubectl 다운로드 페이지
+192.168.2.211    downloads-openshift-console.apps.mas-it.itmsg.co.kr
+
+# ════════ Mirror Registry (Quay UI 볼 때만) ════════
+# Bastion IP (.210) — 다른 줄과 IP가 다름에 주의
+#192.168.2.210    registry.mas-it.itmsg.co.kr
+
+# ════════ MAS 관리·진단 (문제 생겼을 때) ════════
+# all 서버 번들 직접 접근 — 앞단을 건너뛰고 서버 상태 확인
+192.168.2.211    ws1-all.manage.inst1.apps.mas-it.itmsg.co.kr
+# 관리 도구 — /erd (DB 관계도), /toolsapi
+192.168.2.211    maxinst.manage.inst1.apps.mas-it.itmsg.co.kr
+# Db2 직접 접속 — DBeaver 등 SQL 툴
+192.168.2.211    mas-inst1-ws1-manage-db2u.apps.mas-it.itmsg.co.kr
+# MCP 프레임워크 (AI 연동)
+192.168.2.211    ws1-mcp.manage.inst1.apps.mas-it.itmsg.co.kr
+# Slack 알림 프록시 — 미사용
+192.168.2.211    ws1.slackproxy.manage.inst1.apps.mas-it.itmsg.co.kr
+
+# ════════ 모니터링·부가 (필요할 때 주석 해제) ════════
+# Grafana 대시보드
+#192.168.2.211    mas-grafana-route-grafana5.apps.mas-it.itmsg.co.kr
+# Prometheus / Alertmanager / Thanos — 클러스터 메트릭
+#192.168.2.211    alertmanager-main-openshift-monitoring.apps.mas-it.itmsg.co.kr
+#192.168.2.211    prometheus-k8s-openshift-monitoring.apps.mas-it.itmsg.co.kr
+#192.168.2.211    prometheus-k8s-federate-openshift-monitoring.apps.mas-it.itmsg.co.kr
+#192.168.2.211    thanos-querier-openshift-monitoring.apps.mas-it.itmsg.co.kr
+#192.168.2.211    federate-openshift-user-workload-monitoring.apps.mas-it.itmsg.co.kr
+#192.168.2.211    thanos-ruler-openshift-user-workload-monitoring.apps.mas-it.itmsg.co.kr
+# IBM DRO — 라이선스 사용량 보고
+#192.168.2.211    ibm-data-reporter-redhat-marketplace.apps.mas-it.itmsg.co.kr
+#192.168.2.211    rhm-data-service-redhat-marketplace.apps.mas-it.itmsg.co.kr
+# Tekton 파이프라인 콘솔
+#192.168.2.211    pipelines-as-code-controller-openshift-pipelines.apps.mas-it.itmsg.co.kr
+#192.168.2.211    tekton-results-api-openshift-pipelines.apps.mas-it.itmsg.co.kr
+#192.168.2.211    tkn-cli-serve-openshift-pipelines.apps.mas-it.itmsg.co.kr
+```
+
+**3) 실행 — 인증서 처리**
+
+MAS는 자체 서명 CA로 인증서를 발급합니다. 방법이 두 가지이고 **A가 기본, B는 임시**입니다.
+
+| | 방법 | 대상 |
+|---|---|---|
+| **A** | 루트 CA를 PC 신뢰 저장소에 설치 | 사용자 여럿 — 권장 |
+| B | 브라우저에서 호스트마다 경고 수락 | 담당자 1~2명 임시 |
+
+**A) 루트 CA 설치**
+
+Bastion에서 추출합니다.
+
+```bash
+oc get secret inst1-cert-public -n mas-inst1-core \
+  -o jsonpath='{.data.ca\.crt}' | base64 -d > mas-root-ca.crt
+```
+
+검증 : **self-signed 루트**여야 합니다 — `subject`와 `issuer`가 같아야 합니다
+
+```bash
+openssl crl2pkcs7 -nocrl -certfile mas-root-ca.crt | openssl pkcs7 -print_certs -noout
+```
+
+```
+subject=C=GB, L=London, ... CN=public.inst1.mas.ibm.com
+issuer=C=GB, L=London, ... CN=public.inst1.mas.ibm.com
+```
+
+⚠️ 인증서가 2개 이상 나오면 체인입니다. **self-signed인 것(subject = issuer)만** PC에 넣어야 합니다 — 중간 CA만 넣으면 검증되지 않습니다.
+
+```bash
+grep -c "BEGIN CERTIFICATE" mas-root-ca.crt      # 1이면 단일
+```
+
+파일을 PC로 옮겨 설치합니다.
+
+| OS | 방법 |
 |---|---|
-| `registry.<cluster>.<domain>` | Mirror Registry (Quay) — **Bastion IP** |
-| `api.<cluster>.<domain>` | OCP API — 노트북에서 `oc` 사용 시 |
-| `console-openshift-console.apps.…` | OCP 웹 콘솔 |
-| `oauth-openshift.apps.…` | 콘솔 로그인 리다이렉트 — **빠지면 로그인 불가** |
-| `admin.inst1.apps.…` | MAS Suite Administration |
-| `home.inst1.apps.…` | MAS 홈 |
-| `auth.inst1.apps.…` | MAS 인증 |
-| `manage.inst1.apps.…` | Maximo Manage / Maximo IT |
+| Windows | 파일 더블클릭 → **인증서 설치** → **로컬 컴퓨터** → **신뢰할 수 있는 루트 인증 기관** |
+| Windows (일괄) | GPO → 컴퓨터 구성 → 정책 → Windows 설정 → 보안 설정 → 공개 키 정책 → 신뢰할 수 있는 루트 인증 기관 |
+| macOS | 키체인 접근 → **시스템** → 드래그 후 "항상 신뢰" |
 
-⚠️ Route는 설치가 진행되면서 늘어납니다. Manage 서버가 올라온 뒤 위 명령을 **다시 실행해** 추가된 이름(`ws1.manage.…` 등)을 넣으세요.
+🔴 **저장 위치를 틀리면 효과가 없습니다.** "현재 사용자"나 "개인"이 아니라 **로컬 컴퓨터 / 신뢰할 수 있는 루트 인증 기관**이어야 합니다. Chrome·Edge는 Windows 저장소를 쓰므로 설치 후 브라우저를 **완전히 종료**했다 다시 여세요.
 
-#### 3.12.2 운영 전환 — DNS와 인증서
+**B) 브라우저에서 경고 수락 (임시)**
+
+🔴 **호스트마다 따로 수락해야 합니다.** `admin.inst1…` 만 수락하면 Suite Administration이 **로딩 화면에서 멈춥니다** — `api.inst1…` 로 가는 XHR이 전부 차단되기 때문입니다(개발자 도구 Network에 `(failed)`).
+
+새 탭에서 아래 주소를 하나씩 열어 "고급 → 계속"을 누르세요. 흰 화면이나 404가 떠도 무방합니다.
+
+```
+https://api.inst1.apps.mas-it.itmsg.co.kr
+https://auth.inst1.apps.mas-it.itmsg.co.kr
+https://home.inst1.apps.mas-it.itmsg.co.kr
+https://ws1.manage.inst1.apps.mas-it.itmsg.co.kr
+```
+
+**CA를 설치했는데도 경고가 남을 때**
+
+인증서의 SAN(Subject Alternative Name)에 접속 주소가 없는 경우입니다. 서버가 실제로 내려주는 값을 확인하세요.
+
+```bash
+openssl s_client -connect <sno-ip>:443 \
+  -servername ws1.manage.inst1.apps.mas-it.itmsg.co.kr </dev/null 2>/dev/null \
+  | openssl x509 -noout -text | grep -A3 'Subject Alternative Name'
+```
+
+⚠️ 와일드카드는 **한 레이블만** 덮습니다. `*.inst1.apps.…` 는 `admin.inst1.apps.…` 에는 맞지만 `ws1.manage.inst1.apps.…` 처럼 레이블이 더 깊으면 맞지 않습니다.
+
+체인도 함께 확인합니다.
+
+```bash
+openssl s_client -connect <sno-ip>:443 \
+  -servername admin.inst1.apps.mas-it.itmsg.co.kr -showcerts </dev/null 2>/dev/null \
+  | grep -E '^ *[0-9] s:|^ *[0-9] i:'
+```
+
+```
+ 0 s:CN=inst1.apps.mas-it.itmsg.co.kr          ← 서버 인증서
+ 1 s:... CN=public.inst1.mas.ibm.com           ← 이 CA를 PC에 설치해야 함
+```
+
+---
+
+⚠️ Route는 설치가 진행되면서 늘어납니다. 새 애플리케이션을 추가했다면 1)을 **다시 실행해** 빠진 이름을 넣으세요.
+
+#### 3.11.2 실행 — 접속
+
+접속 전에 §3.11.1의 `hosts` 등록과 인증서 수락이 되어 있어야 합니다.
+
+| 주소 | 확인할 것 |
+|---|---|
+| `https://admin.inst1.apps.<cluster>.<domain>` | Suite Administration — Manage가 목록에 있고 상태가 정상인지 |
+| `https://ws1.manage.inst1.apps.<cluster>.<domain>` | **Maximo Manage / Maximo IT 메인** |
+
+로그인 계정은 Superuser입니다. 비대화형 설치에서는 CLI가 랜덤 생성하므로 시크릿에서 확인합니다.
+
+```bash
+oc get secret inst1-credentials-superuser -n mas-inst1-core -o jsonpath='{.data.username}' | base64 -d; echo
+oc get secret inst1-credentials-superuser -n mas-inst1-core -o jsonpath='{.data.password}' | base64 -d; echo
+```
+
+#### 3.11.3 확인 및 검증
+
+- [ ] **Maximo IT 애플리케이션** — Service Desk / Incident / Problem / Service Request 메뉴가 보임
+- [ ] **한국어** — 사용자 프로필에서 언어를 한국어로 바꾸면 UI가 전환됨
+- [ ] **데모 데이터** — 자산·작업오더 목록에 샘플 레코드가 있음 (`--manage-demodata` 를 넣었을 때)
+- [ ] **타임존** — 레코드 생성 시각이 한국 시각으로 표시됨
+
+메뉴가 보이지 않으면 권한 동기화 후 로그아웃 → 재로그인해 보세요.
+
+#### 3.11.4 설치 후 작업
+
+| 항목 | 내용 |
+|---|---|
+| **정식 관리자 계정 생성** | Superuser는 초기 구성 전용입니다. Suite Administration에서 담당자 계정을 만들고 이후로는 그것을 사용하세요 |
+| **AppPoints 할당** | ⬜ 라이선스에 Maximo IT용 AppPoints가 포함되어 있는지 확인 필요. MAS Entitlement와 Maximo IT Entitlement는 각각 필요합니다 |
+| 사용자·그룹 권한 | Maximo IT 애플리케이션별 권한 설정 |
+| **Db2 라이선스** | ⬜ 평가판 90일(`SQL8007W`). IBM에 활성화 키를 확인해 등록 |
+
+
+#### 3.11.5 운영 전환 — DNS와 인증서
 
 🔴 **`hosts` 등록과 인증서 개별 수락은 사내 사용자에게 적용할 수 없습니다.** 운영 전환 전에 아래 둘을 확정해야 합니다.
 
@@ -3794,29 +3973,7 @@ MAS는 설치 시 커스텀 도메인·인증서를 지정할 수 있습니다 �
 
 ⬜ **사이트 구축 전 확정 필요** — 사내 DNS 존재 여부, 사내 CA 존재 여부.
 
-#### 3.12.3 확인 및 검증
-
-```bash
-oc get nodes
-oc get co
-oc get mcp
-oc get suite -A
-oc get manageapp -A
-oc get manageworkspace -A
-oc get imagedigestmirrorset
-oc get pods -A | grep -v Running | grep -v Completed | grep -v Succeeded
-oc get route -A | grep -E 'mas|manage|admin'
-```
-
-체크리스트:
-
-- [ ] OCP 노드가 외부 Registry에 접근하지 않고 Mirror Registry에서만 이미지 Pull
-- [ ] MAS Core, Manage Operator 정상(Ready)
-- [ ] Suite Administration에서 Manage + Maximo IT add-on이 Ready/Active
-- [ ] Maximo IT 메뉴/애플리케이션 접근 가능
-- [ ] AppPoints 소비 정상 확인
-
-#### 3.12.4 노드 종료·재시작 절차
+#### 3.11.6 노드 종료·재시작 절차
 
 VM 사양 변경, 점검, 이설 등으로 SNO를 내려야 할 때의 순서입니다.
 
@@ -3881,214 +4038,121 @@ oc get pods -n mas-inst1-manage | grep -E '\-all\-'
 oc get manageworkspace -A
 ```
 
+
+
 ---
 
-## 4. 트러블슈팅
+### 3.12 데이터베이스(Db2) 접속 (사용자 계정)
 
-### 4.1 `:Z` vs `:z` SELinux 라벨 충돌
+DBeaver 같은 SQL 툴로 Maximo DB를 직접 조회할 때의 절차입니다.
 
-**증상**: 미러링을 여러 터미널에서 동시에 실행하면 로그 파일 쓰기 단계에서 `Permission denied`로 실패.
+🔴 **조회 용도로만 쓰세요.** Maximo는 애플리케이션 계층에서 무결성을 관리하므로 SQL로 데이터를 고치면 정합성이 깨집니다.
 
-**원인**: 두 컨테이너가 같은 디렉터리를 각자 `-v ...:Z`(대문자, 배타적 라벨)로 마운트해서 MCS 카테고리가 충돌. 나중에 시작한 컨테이너가 재라벨링하면 먼저 실행 중인 컨테이너의 접근 권한이 무효화됩니다.
+#### 3.12.1 실행 — 접속 정보 확인
 
-```bash
-sudo grep avc /var/log/audit/audit.log | tail -30
-```
-```
-avc: denied { write } for ... scontext=...:s0:c280,c427  tcontext=...:s0:c285,c450
-```
+**1) 실행 — 계정·URL·인증서**
 
-**해결**: `:Z` 대신 **`:z`**(소문자, 공유 라벨)를 사용합니다. 이 문서의 모든 `podman run`은 `:z`로 되어 있습니다.
-
-### 4.2 MAS 콘텐츠 미러링 중 `cp.icr.io` OAuth 토큰 타임아웃
-
-**증상**: `mas mirror-images` 실행 중 `Fail if mirror is not successful` 태스크에서 실패. 로그에 아래 에러.
-
-```
-error: unable to push cp.icr.io/cp/manage/aip-optimizer: failed to retrieve blob ...:
-Get "https://cp.icr.io/oauth/token?...": net/http: request canceled (Client.Timeout exceeded)
-```
-
-**원인**: IBM 레지스트리의 OAuth 토큰 발급이 일시적으로 타임아웃. `oc image mirror`는 이미지 하나라도 실패하면 전체를 실패로 처리합니다.
-
-**해결**: 받은 콘텐츠는 `mirror/<stage>/v2`에 남아 있고 재실행 시 건너뜁니다. **디렉터리를 비우지 말고 같은 명령을 다시 실행**하세요.
-
-### 4.3 Red Hat 콘텐츠 미러링 — 타임아웃과 캐시 소실
-
-**증상**: 약 1.5시간 지점부터 `rhoai`(OpenShift AI)의 대용량 이미지에서 반복 실패하고 `rc=4`로 종료. 이미지 하나가 실패하면 해당 Operator 번들 전체가 스킵됩니다.
-
-```
-error: copying image 1/1 from manifest list: writing blob:
-Patch "http://localhost:55000/v2/rhoai/odh-.../blobs/uploads/...": context deadline exceeded
-```
-
-**원인 1 — 타임아웃**: `localhost:55000`은 oc-mirror v2의 로컬 캐시 레지스트리입니다. 다운로드가 아니라 **캐시에 쓰는 작업**이 이미지당 기본 타임아웃(10분)을 넘긴 것입니다. 실효 속도 5~9MB/s에서 10분에 처리 가능한 크기는 약 3~5GB인데 rhoai 이미지는 그보다 큽니다.
-
-**원인 2 — 캐시 소실**: `--cache-dir` 기본값이 **`$HOME`**(컨테이너 내부)이라, `--rm` 컨테이너가 종료될 때 캐시가 함께 삭제됩니다. 실제로 5시간 미러링이 실패했을 때 산출물은 8.4GB뿐이었고 컨테이너에 쌓인 116GB가 전부 사라졌습니다. Red Hat 공식 절차는 `oc mirror`를 호스트에서 직접 실행하므로 이 문제가 없습니다.
-
-**해결**: §2.3의 8번을 1) imageset 생성 / 2) 미러링으로 분리하고, 2)에서 `oc mirror`를 직접 호출하며 두 옵션을 추가했습니다.
-
-| 옵션 | 목적 |
-|---|---|
-| `--cache-dir /mnt/cache` | 캐시를 호스트 볼륨에 둬 **실패해도 이어받기** |
-| `--image-timeout 60m` | 이미지당 기본 10분 → 60분 |
-
-시작 10분 뒤 호스트 캐시가 커지고 컨테이너 SIZE는 작게 유지되어야 정상입니다.
+Manage가 사용하는 JDBC 바인딩 시크릿에 전부 들어 있습니다.
 
 ```bash
-du -sh ~/mas-install/oc-mirror-cache
-podman ps --size --format "{{.Status}}  SIZE={{.Size}}"
+export KUBECONFIG=~/ocp-sno/auth/kubeconfig
+
+oc get secret -n mas-inst1-manage | grep -i jdbc
+
+oc get secret inst1-ws1-jdbccfg-workspace-application-binding -n mas-inst1-manage \
+  -o jsonpath='{.data}' | jq -r 'to_entries[] | "\(.key): \(.value|@base64d)"'
 ```
 
-반복 실패하면 `--parallel-images 4`로 동시성을 낮춥니다. `imageset-ocp4.20.yml`에서 `rhods-operator`를 제거하는 방법은 공식 기본 범위를 벗어나므로 최후 수단입니다.
-
-**부작용 — 불완전한 `working-dir`**
-
-1)에서 래퍼를 중단하면 반쯤 만들어진 `working-dir`이 남고, 2)가 이를 기존 작업으로 인식해 실패한다.
+출력 예시입니다.
 
 ```
-failed to find release image in index: ... release-images/ocp-release/4.20.30-x86_64/index.json: no such file or directory
+password: X5D4gNDiRlMsPUu
+sslenabled: true
+url: jdbc:db2://c-mas-inst1-ws1-manage-db2u-engn-svc.db2u.svc:50001/BLUDB:sslConnection=true;sslVersion=TLSv1.2;
+username: db2inst1
+certificates_0: map[alias:... crt:-----BEGIN CERTIFICATE-----...]
 ```
 
-1) 마지막에 `rm -rf ~/mas-install/mirror/redhat/working-dir ~/mas-install/mirror/redhat/logs`를 실행해 `config.json`과 `imageset-ocp4.20.yml` 두 개만 남겨야 한다. 단 **2)가 실패해 재시도하는 경우에는 `working-dir`을 지우지 않는다** — 그때는 oc-mirror가 스스로 만든 정상 상태다.
+⚠️ `url`의 주소는 **클러스터 내부 DNS 이름**이라 노트북에서는 해석되지 않습니다. 외부에서 붙으려면 아래 2)의 NodePort나 Route를 씁니다.
 
-### 4.4 SSH 접속을 끊으면 미러링 컨테이너가 죽음
-
-**증상**: 백그라운드로 띄운 미러링이 접속을 끊은 시점에 중단. 로그가 이미지 복사 도중 끊기고 마지막 줄이 아래와 같다.
-
-```
-container not running: No such process
-```
-
-`podman ps`에 컨테이너가 없고, OOM 기록(`dmesg | grep -i "killed process"`)도 없다.
-
-**원인**: rootless podman 컨테이너는 사용자 세션에 속한다. `nohup`/`disown`은 SIGHUP만 막고, `systemd-logind`가 **마지막 세션 종료 시 user slice를 정리**하는 것은 막지 못한다.
+**2) 실행 — 외부 접속 포트 확인**
 
 ```bash
-loginctl show-user maximo | grep -i linger     # Linger=no 면 이 원인
+oc get svc c-mas-inst1-ws1-manage-db2u-engn-svc -n db2u
+oc get route -n db2u
 ```
 
-**해결**: `linger`를 켜면 세션과 무관하게 사용자 프로세스가 유지된다. 켠 뒤 같은 명령을 재실행하면 캐시에서 이어받는다.
-
-```bash
-sudo loginctl enable-linger maximo
-loginctl show-user maximo | grep -i linger     # Linger=yes
+```
+PORT(S)   50001:32703/TCP,50000:31899/TCP
+HOST      mas-inst1-ws1-manage-db2u.apps.mas-it.itmsg.co.kr
 ```
 
-### 4.5 `mas mirror-redhat-images --mode from-filesystem` 을 쓰지 않는 이유
-
-IBM CLI 23.4.1의 `mirror_ocp` 역할이 아래 명령을 실행합니다.
-
-```
-oc mirror --remove-signatures -c <dir>/imageset-ocp<ver>.yml \
-  --dest-tls-verify=false --parallel-images=1 \
-  --from file://<dir>/mirror_seq1_000000.tar docker://<registry> --v2
-```
-
-문제가 두 가지 겹쳐 있습니다.
-
-| | 내용 |
-|---|---|
-| 파일명 | `mirror_seq1_000000.tar`가 하드코딩돼 있는데, 같은 이미지에 내장된 oc-mirror(4.22.0)는 **`mirror_000001.tar`** 로 만듭니다 |
-| 문법 | `--from`에 **tar 파일 경로**를 주는 건 oc-mirror **v1** 방식입니다. `--v2`에서는 `--from file://<디렉터리>`를 받아 그 안의 `mirror_*.tar`를 스스로 찾습니다 |
-
-`to-filesystem.yml`은 파일명을 전혀 다루지 않고 `oc mirror`를 그대로 호출합니다. 즉 산출물 이름은 oc-mirror가 정하는데 반대편 역할만 v1 시절 이름과 문법에 묶여 있는 것으로, **IBM CLI 자체의 버전 불일치**입니다.
-
-실제로 실행하면 이렇게 끝납니다.
-
-```
-[INFO]  : 🔀 workflow mode: diskToMirror
-[ERROR] : [Executor] no tar archives matching "mirror_[0-9]{6}\.tar"
-          found in "/mnt/workspace/redhat/mirror_seq1_000000.tar"
-```
-
-`--from` 값을 **디렉터리로 열어서** 그 안의 `mirror_[0-9]{6}.tar`를 찾습니다. 산출물 `mirror_000001.tar`는 이 패턴에 이미 부합하므로, **리네임하면 오히려 패턴에서 벗어납니다.**
-
-**해결**: 파일명을 바꾸지 말고 §3.6.4처럼 `oc mirror`를 직접 호출합니다. §2.3 8번에서 이미 같은 이유로 래퍼를 우회했으므로 양방향이 대칭이 됩니다.
-
-```
---from file:///mnt/workspace/redhat        # 디렉터리 — tar 파일명 무관
-```
-
-파일 목록 검증(`transfer-files.sha256`)과도 어긋나지 않는다는 이점이 있습니다.
-
-**참고** — 역할이 실제로 실행하는 명령입니다. 래퍼를 우회할 때 그대로 쓰면 됩니다.
-
-```
-DOCKER_CONFIG=<dir> oc mirror --remove-signatures -c <dir>/imageset-ocp4.20.yml \
-  --dest-tls-verify=false --parallel-images=1 \
-  --from file://<dir>/mirror_seq1_000000.tar docker://<registry> --v2
-```
-
-### 4.6 `install-config.yaml` 검증 실패 — `imageDigestSources`
-
-**증상**: §3.7.6 ISO 생성이 실패합니다.
-
-```
-FATAL failed to load asset "Install Config": invalid install-config configuration:
-      imageDigestSources[23].source: Invalid value: "docker.io/grafana":
-      the repository provided is invalid: a lowercase RFC 1123 subdomain must consist of ...
-```
-
-**원인**: `idms-oc-mirror.yaml`의 미러 34건을 `install-config.yaml`에 그대로 옮기면, `openshift-install`의 저장소 이름 검증이 `docker.io/grafana` 같은 항목을 거부합니다. **IDMS CRD는 받아들이는 형식인데 설치 프로그램 쪽 검증이 더 엄격합니다.**
-
-**해결**: release 미러 2건만 넣습니다. 둘은 쓰이는 시점이 다릅니다.
-
-| | 언제 | 어디에 |
+| 경로 | 주소 | 비고 |
 |---|---|---|
-| release 미러 2건 | **부트스트랩** — 클러스터가 아직 없을 때 릴리스 이미지를 받는 경로 | `install-config.yaml` |
-| 오퍼레이터 미러 32건 | 클러스터 기동 후 오퍼레이터·워크로드 이미지 | §3.8에서 `oc apply -f idms-oc-mirror.yaml` |
+| **NodePort (평문)** | `<sno-ip>:31899` | 가장 간단. `hosts` 등록·인증서 불필요 |
+| NodePort (SSL) | `<sno-ip>:32703` | Db2 CA 인증서 필요 |
+| Route (SSL) | `mas-inst1-ws1-manage-db2u.apps.<cluster>.<domain>:443` | `hosts` 등록 + CA 필요 |
+| 클러스터 내부 | `c-mas-inst1-ws1-manage-db2u-engn-svc.db2u.svc:50001` | Manage가 쓰는 경로 |
 
-버리는 것이 아니라 **적용 시점을 뒤로 미루는 것**이며, Red Hat 공식 예시도 `install-config.yaml`에는 release만 넣습니다.
+⚠️ NodePort 번호는 **설치마다 달라집니다.** 위 명령으로 확인하세요.
 
-```bash
-# idms-release-0 문서만 추출
-awk '/name: idms-release-0/{d=1} d&&/^  imageDigestMirrors:/{f=1;next} /^---/{f=0;d=0} f' \
-  ~/mas-install/mirror/redhat/working-dir/cluster-resources/idms-oc-mirror.yaml
-```
+**3) 실행 — SSL 인증서 추출** (SSL로 붙을 때만)
 
-### 4.7 MCO가 `registries.conf`를 렌더링하지 못함 — `conflicting mirrorSourcePolicy`
-
-**증상**: §3.8.2 이후 IDMS 오브젝트는 존재하고 `oc get mcp`도 `UPDATED=True`인데, **노드의 `registries.conf`에 반영되지 않습니다.** 새 `rendered-master-*`가 생성되지 않는 것이 단서입니다.
-
-MAS 설치(§3.10)에서 `TaskRunImagePullFailed`로 드러납니다 — Tekton이 `quay.io/ibmmas/cli@sha256:...`를 당기는데 미러 매핑이 없기 때문입니다.
+Db2 전용 CA이며 MAS 루트 CA와 다릅니다(`CN=ca.db2u`).
 
 ```bash
-oc logs -n openshift-machine-config-operator deploy/machine-config-controller --tail=20
+oc get secret inst1-ws1-jdbccfg-workspace-application-binding -n mas-inst1-manage \
+  -o jsonpath='{.data.certificates_0}' | base64 -d | \
+  sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' > db2-ca.crt
+
+openssl x509 -in db2-ca.crt -noout -subject -dates
 ```
 
-```
-Error syncing image config openshift-config: could not Create/Update MachineConfig:
-could not update registries config with new changes:
-conflicting mirrorSourcePolicy is set for the same source "icr.io/cpopen"
-in imagedigestmirrorsets, imagetagmirrorsets, or imagecontentsourcepolicies
-```
+#### 3.12.2 실행 — 접속
 
-**원인**: §3.8.1의 `idms-operator-0`(oc-mirror 생성)과 §3.8.2의 `mas-ibm-catalog`(`mas configure-airgap` 생성)가 **같은 source에 다른 `mirrorSourcePolicy`** 를 지정합니다.
+**DBeaver**에서 드라이버는 **Db2 for LUW**를 고릅니다(`Db2 for IBM i`·`z/OS`·`Old 8.x` 아님).
 
-| IDMS | `icr.io/cpopen` 정책 |
+| 항목 | 값 |
 |---|---|
-| `idms-operator-0` | 기본값 (`AllowContactingSource`) |
-| `mas-ibm-catalog` | `NeverContactSource` |
+| Host | `<sno-ip>` |
+| Port | `31899` (평문) / `32703` (SSL) |
+| Database | `BLUDB` |
+| Username | `db2inst1` |
+| Password | 1)에서 확인한 값 |
 
-정책이 충돌하면 MCO는 **registries.conf 전체 렌더링을 중단**합니다. 그 결과 `mas-ibm-catalog`의 매핑이 **하나도 반영되지 않습니다** — `quay.io/ibmmas`, `cp.icr.io/cp`, `icr.io/db2u` 등 MAS 이미지 경로 전부입니다.
+JDBC URL로 직접 넣을 수도 있습니다.
 
-**해결**: 충돌하는 source의 정책을 맞춥니다.
-
-```bash
-IDX=$(oc get idms idms-operator-0 -o json | \
-  jq -r '.spec.imageDigestMirrors | to_entries[] | select(.value.source=="icr.io/cpopen") | .key')
-
-oc patch idms idms-operator-0 --type=json \
-  -p "[{\"op\":\"add\",\"path\":\"/spec/imageDigestMirrors/$IDX/mirrorSourcePolicy\",\"value\":\"NeverContactSource\"}]"
+```
+jdbc:db2://<sno-ip>:31899/BLUDB
+jdbc:db2://<sno-ip>:32703/BLUDB:sslConnection=true;sslVersion=TLSv1.2;
 ```
 
-적용되면 새 `rendered-master-*`가 생기고 항목 수가 34 → 43으로 늘어납니다.
+Maximo 테이블은 **`maximo` 스키마**에 있습니다.
+
+#### 3.12.3 확인 및 검증
+
+검증 : 클러스터 안에서 먼저 확인합니다 — 여기서 실패하면 DB 자체 문제입니다
 
 ```bash
-oc get mc --sort-by=.metadata.creationTimestamp | tail -2
-ssh -i ~/.ssh/quay_installer core@<sno-ip> 'grep -c "^\[\[registry\]\]" /etc/containers/registries.conf'
+oc rsh -n db2u c-mas-inst1-ws1-manage-db2u-0 bash -c \
+  'su - db2inst1 -c "db2 connect to BLUDB; db2 \"select count(*) from maximo.maxuser\""'
 ```
 
-⚠️ **`quay.io/ibmmas` IDMS를 따로 만들지 마세요.** `mas-ibm-catalog`에 이미 들어 있어 중복 정의가 되고, 같은 충돌을 하나 더 만듭니다.
+```
+ Database server        = DB2/LINUXX8664 12.1.4.0
+ SQL authorization ID   = DB2INST1
+ Local database alias   = BLUDB
 
+1
+---------------------------------
+                              94.
+```
+
+검증 : 노트북에서 포트가 열려 있는지
+
+```bash
+# Windows PowerShell
+Test-NetConnection <sno-ip> -Port 31899
+```
+
+여기서 막히면 방화벽 또는 NodePort 미개방입니다. 클러스터 안 조회는 되는데 외부만 안 되면 네트워크 문제로 좁혀집니다.

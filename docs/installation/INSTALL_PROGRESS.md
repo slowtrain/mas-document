@@ -2,63 +2,30 @@
 
 설치 절차는 [OFFLINE_INSTALL.md](OFFLINE_INSTALL.md)를 참고하세요. 이 문서는 어디까지 진행됐는지만 기록합니다.
 
-**최종 갱신**: 2026-08-06
+**최종 갱신**: 2026-08-08
 
-## 다음에 할 일 (2026-08-07 19:15 기준)
+## 설치 완료 (2026-08-07)
 
-`mas install` 재실행(`inst1-install-260807-0848`)이 진행 중입니다. **Manage 이미지 빌드 → maxinst → 서버 배포**만 남았고, 클러스터 안에서 자동으로 돕니다.
+`inst1-install-260807-1016` 파이프라인으로 MAS Core + Manage + Maximo IT 설치를 완료했고 웹 UI에서 동작을 확인했습니다.
 
-**1) 현재 상태 확인**
-
-```bash
-export KUBECONFIG=~/ocp-sno/auth/kubeconfig
-oc get pipelinerun -n mas-inst1-pipelines
-oc get manageworkspace -A
-oc get build -n mas-inst1-manage
-oc get pods -n mas-inst1-manage | grep -E 'maxinst|-all-'
-```
-
-| 보이는 것 | 의미 |
+| 항목 | 결과 |
 |---|---|
-| PipelineRun `Succeeded` + ManageWorkspace `Ready` + `inst1-ws1-all` `2/2 Running` | **완료** → 2)로 |
-| `admin-build-config` / `all-build-config` 가 `Running` 또는 `Complete` | 정상 진행 중 — 기다리기 |
-| `inst1-ws1-manage-maxinst-*` `Running` | DB 스키마 + 데모 데이터 적재 중 (90분~2시간) |
-| 빌드가 생겼다 사라지기를 반복 | 오퍼레이터 Pod을 지워 재시작 (아래) |
-| PipelineRun `False` | 실패한 Task 확인 후 §3.10.5로 초기화 → §3.10.3 재실행 |
+| MAS Core / Manage | 9.2.0 |
+| 컴포넌트 | `base` + **`icd`** (Maximo IT) |
+| 언어 | base `EN` + **`KO`** |
+| 데모 데이터 | 적재됨 |
+| 타임존 | Manage · Db2 모두 `Asia/Seoul` |
+| Db2 | 전용 인스턴스, `dftTableOrg: ROW`, `db2Vargraphic: true` |
 
-빌드가 1분 만에 사라지는 현상이 반복되면 오퍼레이터를 재시작합니다. **`oc rollout restart`는 OLM이 되돌리므로 Pod을 직접 지웁니다.**
+접속 주소·계정은 [ACCESS.md](ACCESS.md), 재설치·초기화 절차는 [OFFLINE_INSTALL.md §3.10.3, §3.10.5](OFFLINE_INSTALL.md)를 보세요.
 
-```bash
-oc delete pod -n mas-inst1-manage -l app.kubernetes.io/name=ibm-mas-manage
-```
+### 남은 작업
 
-**2) 완료 후 확인**
-
-```bash
-# 설정이 의도대로 들어갔는지
-oc get manageworkspace inst1-ws1 -n mas-inst1-manage -o jsonpath='{.spec.settings}' | jq
-```
-
-기대값 — `secondaryLangs: ["KO"]` / `demodata: true` / `serverTimezone: "Asia/Seoul"` / `db2Vargraphic: true`
-
-```bash
-# 접속 주소 (hosts 등록 필요, SERVER_INFO.md 참고)
-oc get route -n mas-inst1-manage
-```
-
-`https://ws1.manage.inst1.apps.mas-it.itmsg.co.kr` 로그인 후 확인할 것.
-
-- [ ] Maximo IT 메뉴 (Service Desk / Incident / Problem / Service Request)
-- [ ] 사용자 프로필에서 한국어 전환
-- [ ] 자산·작업오더에 데모 데이터
-- [ ] 레코드 시각이 한국 시각인지
-
-**3) 남은 작업**
-
-- [ ] 정식 관리자 계정 생성 (Superuser는 랜덤 생성값, 초기 구성 전용)
-- [ ] Db2 라이선스 — 평가판 90일. IBM에 활성화 키 확인
-- [ ] `inst1-mcp` Pod이 `0/1`로 남아 있으면 원인 확인 (startup probe 503)
-- [ ] 사내 DNS·사내 CA 확인 (§3.12.2 — 없으면 사용자 접속 불가)
+- [ ] 정식 관리자 계정 생성 — Superuser는 CLI가 랜덤 생성한 값이며 초기 구성 전용
+- [ ] Db2 라이선스 — **평가판 90일**(`SQL8007W`). IBM에 활성화 키 확인 후 등록
+- [ ] 🔴 사내 DNS — `*.apps` 와일드카드 등록 (없으면 사용자 PC마다 `hosts` 필요)
+- [ ] 🔴 사내 CA — 자체 서명 인증서 교체 또는 루트 CA 배포
+- [ ] Maximo IT AppPoints 권한 확인
 
 ---
 
@@ -67,7 +34,7 @@ oc get route -n mas-inst1-manage
 | 단계 | 상태 |
 |---|---|
 | §2 사전준비 (인터넷 연결 서버) | ✅ **완료** — tar 조각 25개 준비됨, FileZilla 반출 대기 |
-| §3 설치 (사이트 Bastion) | 🔄 **§3.10 진행 중** — Core 완료, Manage 빌드·maxinst 남음 |
+| §3 설치 (사이트 Bastion) | ✅ **완료** — Core + Manage + Maximo IT, 언어·데모 데이터·타임존 반영 |
 
 ## §2 사전준비 — 완료
 
@@ -96,7 +63,7 @@ oc get route -n mas-inst1-manage
 | 3차 (5h53m) | 실패 6건 | **디스크 89%** 압박으로 후반 캐시 쓰기 지연 → 재타임아웃 | 디스크 +1TB 증설 |
 | 4차 (1h13m) | ✅ **성공** | — | 캐시 355GB에서 이어받아 실패분만 수신 + tar 생성 |
 
-상세는 [OFFLINE_INSTALL.md §4.3, §4.4](OFFLINE_INSTALL.md).
+상세는 [TROUBLE_SHOOTING.md 3, 4](TROUBLE_SHOOTING.md).
 
 ### 9번에서 발견한 것
 
@@ -123,7 +90,7 @@ oc get route -n mas-inst1-manage
 
 **§3.6 직전에 역할 파일을 다시 읽어보니 문제가 파일명만이 아니었습니다.** `--from`에 tar 파일 경로를 주는 것 자체가 oc-mirror **v1** 문법이고, `--v2`는 `--from file://<디렉터리>`를 받아 tar를 스스로 찾습니다. 이름을 맞춰줘도 통하지 않습니다.
 
-**리네임은 하지 않기로 했습니다.** §2.3 8번에서 이미 `oc mirror`를 직접 호출했으므로 §3.6도 대칭으로 직접 호출합니다 — 파일명이 무관해지고 `transfer-files.sha256`과도 어긋나지 않습니다. 상세는 [OFFLINE_INSTALL.md §4.5](OFFLINE_INSTALL.md).
+**리네임은 하지 않기로 했습니다.** §2.3 8번에서 이미 `oc mirror`를 직접 호출했으므로 §3.6도 대칭으로 직접 호출합니다 — 파일명이 무관해지고 `transfer-files.sha256`과도 어긋나지 않습니다. 상세는 [TROUBLE_SHOOTING.md 5](TROUBLE_SHOOTING.md).
 
 ### §2.5 전달 준비 — 완료
 
@@ -142,7 +109,7 @@ oc get route -n mas-inst1-manage
 - [ ] 사이트 Bastion 디스크 1.5TB 증설 (현재 500GB)
 - [ ] 사이트 Bastion에서 복원 및 검증 → §3.1 시작
 
-## §3 설치 — §3.6 진행 중
+## §3 설치 — 완료
 
 | 절 | 상태 |
 |---|---|
@@ -153,10 +120,10 @@ oc get route -n mas-inst1-manage
 | 3.5 Mirror Registry (Quay) 설치 | ✅ 컨테이너 3개 `Up`, `curl … /v2/` → `401`(`-k` 없이), `podman login` → `Login Succeeded!` |
 | 3.6 이미지 Push | ✅ Red Hat 373GB + MAS 4단계, `[FAILURE]` 0건. Quay Organization 31개 |
 | 3.7 SNO 설치 | ✅ `4.20.30` / 노드 `Ready` / `sdb` 500GB 빈 상태 확인 |
-| 3.8 Airgap(폐쇄망) 구성 | ✅ IDMS 33건 + CatalogSource 3건, `mas configure-airgap` 완료, 미러 Pull 테스트 `Running` |
+| 3.8 Airgap(폐쇄망) 구성 | ✅ IDMS 33건 + CatalogSource 3건. ⚠️ `icr.io/cpopen` 정책 충돌 해소 필요 (§3.8.2 4단계) |
 | 3.9 스토리지 준비 | ✅ RWO `lvms-vg1` / RWX `nfs-client` / 쓰기 테스트 통과 / 내부 Image Registry `Managed` |
-| 3.10 MAS Core 설치 | ✅ PipelineRun `Succeeded` (65분). Core 9.2.0 / Manage 9.2.0 `Ready`, 컴포넌트 `base`+`icd` |
-| 3.11 이후 | ⬜ |
+| 3.10 MAS 설치 (Core + Manage + Maximo IT) | ✅ `inst1-install-260807-1016` 완료. 언어 `EN`+`KO`, 데모 데이터, 타임존 `Asia/Seoul` |
+| 3.11 접속·확인 (웹 UI) | ✅ `hosts` 등록 후 웹 UI에서 메뉴·한국어·데모 데이터 확인. ⬜ 사내 DNS·CA는 운영 전환 시 필요 |
 
 ### §3.10에서 확인한 것
 
@@ -178,32 +145,37 @@ podman image inspect quay.io/ibmmas/cli:23.4.1 --format '{{.Digest}}'
 
 **Maximo IT는 `11.1) Maximo Manage Components`에서 켭니다.** 기본값은 Health만 활성화라 그대로 두면 빠집니다. 목록 중간(`Maximo IT`)에 있어 무심코 넘기기 쉽습니다. 제대로 선택되면 `11.2) Maximo IT License Terms` 화면이 추가로 나옵니다.
 
-실제 적용값이 입력 화면과 다른 것이 둘 있습니다.
+🔴 **대화형(§3.10.2)은 언어·데모 데이터를 묻지 않고, 타임존은 입력해도 반영되지 않습니다.** 처음 설치에서 이것들이 빠져 재설치해야 했습니다. **§3.10.3 비대화형으로 플래그를 넘기는 것이 유일하게 확실한 방법**입니다.
 
-| 항목 | 화면 표시 | 실제 적용 |
-|---|---|---|
-| Db2 CPU/볼륨 | 4000m / 425Gi | **300m / 60Gi** (`server-bundle-size: dev` 기준) |
-| Manage Server Timezone | `Asia/Seoul` 입력 | **`Default`** — 반영 안 됨 |
+```
+--manage-base-language EN --manage-secondary-languages "KO"
+--manage-demodata
+--manage-server-timezone Asia/Seoul --db2-timezone Asia/Seoul
+```
 
-Db2 축소는 SNO에 오히려 적합합니다. 타임존은 설치 후 `ManageWorkspace` CR에서 조정합니다.
+Db2 자원도 화면 표시(CPU 4000m / 볼륨 425Gi)와 달리 `server-bundle-size: dev` 기준(**300m / 60Gi**)이 적용됩니다. SNO에는 이쪽이 적합합니다.
 
 **`db2wh`의 row-organized 문제는 없었습니다.** IBM 역할이 Db2uCluster CR에 `dftTableOrg: ROW`를 명시적으로 넣습니다 — 미확정으로 남겨뒀던 항목이 해소됐습니다.
 
-**한국어 VARGRAPHIC도 자동으로 켜집니다.** `ManageWorkspace` CR에 `db2Vargraphic: true`가 기본값으로 들어갑니다. 이것도 오래 남아 있던 위험 항목이었습니다.
+**한국어 VARGRAPHIC도 자동으로 켜집니다.** `ManageWorkspace` CR에 `db2Vargraphic: true`가 기본값으로 들어갑니다.
 
-`mas install`이 만든 `ManageWorkspace` 설정값입니다.
+최종 `ManageWorkspace` 설정값입니다.
 
 | 항목 | 값 |
 |---|---|
-| `db2Vargraphic` | **`true`** — 한국어 저장 가능 |
-| `baseLang` / `secondaryLangs` | `EN` / `[]` — 한국어는 §3.11에서 추가 |
-| `serverTimezone` | **`GMT`** — 설치 시 입력한 `Asia/Seoul`이 반영 안 됨 |
+| `baseLang` / `secondaryLangs` | `EN` / **`["KO"]`** |
+| `demodata` | **`true`** |
+| `serverTimezone` | **`Asia/Seoul`** |
+| `db2Vargraphic` | `true` |
 | `dbSchema` / `tableSpace` / `indexSpace` | `maximo` / `MAXDATA` / `MAXINDEX` |
 | `serverBundles` | `all` 1개, replica 1 |
-| `demodata` | `false` |
 | `components` | `base` + **`icd`** |
 
 ⚠️ `app-cfg-manage`의 워크스페이스 대기 타임아웃은 **18시간**입니다(360초 × 180회). Manage 이미지 빌드와 DB 스키마 생성(maxinst)이 이 구간에서 일어납니다.
+
+**재설치할 때는 잔여 오브젝트를 반드시 지워야 합니다.** `db2u`의 `mas-inst1-ws1-manage-enforce-config` ConfigMap을 남겼다가 Db2 설정 적용 단계가 통째로 스킵되어 파이프라인이 멈췄습니다. 절차는 [OFFLINE_INSTALL.md §3.10.5](OFFLINE_INSTALL.md)에 있습니다.
+
+**SNO 16코어로는 부족합니다.** 설치 직후 CPU 요청이 93%라 Manage 이미지 빌드 Pod이 `Insufficient cpu`로 스케줄되지 못했습니다. **20코어로 증설**한 뒤 해결됐습니다(§SERVER_INFO).
 
 ### §3.9에서 확인한 것
 
@@ -245,7 +217,7 @@ IDMS 오브젝트는 네 개이며 출처가 다릅니다.
 
 ### §3.7에서 확인한 것
 
-**`install-config.yaml`의 `imageDigestSources`에는 release 미러 2건만 넣습니다.** IDMS 34건을 그대로 옮기면 `openshift-install` 검증이 `docker.io/grafana`를 거부합니다 — IDMS CRD보다 설치 프로그램 쪽 검증이 엄격합니다. 오퍼레이터 미러는 §3.8에서 `oc apply`로 적용하므로 버리는 것이 아니라 시점을 미루는 것입니다(§4.6).
+**`install-config.yaml`의 `imageDigestSources`에는 release 미러 2건만 넣습니다.** IDMS 34건을 그대로 옮기면 `openshift-install` 검증이 `docker.io/grafana`를 거부합니다 — IDMS CRD보다 설치 프로그램 쪽 검증이 엄격합니다. 오퍼레이터 미러는 §3.8에서 `oc apply`로 적용하므로 버리는 것이 아니라 시점을 미루는 것입니다([TROUBLE_SHOOTING.md 6](TROUBLE_SHOOTING.md)).
 
 **디스크는 `hctl`로 지정합니다.** `deviceName: /dev/sda`는 인식 순서에 따라 달라지는데다 항상 무언가에 매칭돼 조용히 틀립니다. vSphere의 `SCSI(0:0)` → `hctl: "0:0:0:0"`. 힌트에 맞는 디스크가 없으면 설치가 검증 실패로 멈추므로 데이터를 잃지 않습니다.
 
@@ -290,7 +262,7 @@ Quay 저장 용량은 tar 373GB → **325GB**입니다. 이미지 간 공유 레
 
 MAS push에는 **`--ibm-entitlement`가 필수**입니다 — 폐쇄망이라 인증에 쓰이지 않는데도 없으면 CLI가 `--help`만 출력하고 종료합니다.
 
-계정 정보는 [SERVER_INFO.md](SERVER_INFO.md)의 **계정** 절에 있습니다.
+계정 정보는 [ACCESS.md](ACCESS.md)에 있습니다.
 
 ### §3.5에서 확인한 것
 
@@ -314,8 +286,8 @@ MAS push에는 **`--ibm-entitlement`가 필수**입니다 — 폐쇄망이라 �
 | ~~Db2 `db2wh`의 row-organized 문제~~ | ✅ Db2uCluster CR에 `dftTableOrg: ROW` 자동 설정 |
 | ~~Manage가 내부 Image Registry를 쓰는지~~ | ✅ 사용함. `admin-build-config` / `all-build-config` 두 빌드가 push |
 | ~~NFS 프로비저너 SCC 부여 필요 여부~~ | ✅ **필수** — 없으면 Pod 생성 자체가 거부 |
-| ~~`from-filesystem`이 `working-dir`도 필요한지~~ | ✅ IBM 래퍼를 쓰지 않고 `oc mirror` 직접 호출로 해결(§4.5) |
-| ~~`imageDigestSources` vs `imageContentSources`~~ | ✅ `imageDigestSources` 사용, release 2건만(§4.6) |
+| ~~`from-filesystem`이 `working-dir`도 필요한지~~ | ✅ IBM 래퍼를 쓰지 않고 `oc mirror` 직접 호출로 해결([TROUBLE_SHOOTING.md 5](TROUBLE_SHOOTING.md)) |
+| ~~`imageDigestSources` vs `imageContentSources`~~ | ✅ `imageDigestSources` 사용, release 2건만([TROUBLE_SHOOTING.md 6](TROUBLE_SHOOTING.md)) |
 | ~~`LVMCluster`의 `apiVersion`~~ | ✅ 확인 완료 |
 | ~~`mas configure-airgap`의 Red Hat 플래그 실존 여부~~ | ✅ 존재하나 미사용 — `oc mirror` 산출물이 경로상 정확 |
 
@@ -323,8 +295,8 @@ MAS push에는 **`--ibm-entitlement`가 필수**입니다 — 폐쇄망이라 �
 
 | 항목 | 비고 |
 |---|---|
-| 🔴 **사내 DNS 존재 여부** | 없으면 사용자 PC마다 `hosts` 등록이 필요해 운영 불가. `*.apps` 와일드카드 등록 또는 Bastion dnsmasq 위임 필요(§3.12.2) |
-| 🔴 **사내 CA 존재 여부** | 자체 서명 인증서는 호스트마다 브라우저 경고가 뜨고, `api.inst1…` 을 수락하지 않으면 Suite Administration이 로딩에서 멈춤. 사내 CA 발급 인증서 또는 루트 CA 배포 필요(§3.12.2) |
+| 🔴 **사내 DNS 존재 여부** | 없으면 사용자 PC마다 `hosts` 등록이 필요해 운영 불가. `*.apps` 와일드카드 등록 또는 Bastion dnsmasq 위임 필요(§3.11.5) |
+| 🔴 **사내 CA 존재 여부** | 자체 서명 인증서는 호스트마다 브라우저 경고가 뜨고, `api.inst1…` 을 수락하지 않으면 Suite Administration이 로딩에서 멈춤. 사내 CA 발급 인증서 또는 루트 CA 배포 필요(§3.11.5) |
 | **Maximo IT AppPoints 권한** | 라이선스 파일 보유가 IT 권한 보유를 의미하지 않음. 실제 사용 시 확인 필요 |
 | **한국어 추가 언어 적용 방법** | `baseLang: EN` / `secondaryLangs: []` 로 설치됨. 한국어를 쓰려면 추가 절차 필요 |
 | **Server Timezone 반영 방법** | 설치 시 `Asia/Seoul` 입력이 무시되고 `GMT`로 들어감. `ManageWorkspace` CR 수정으로 되는지 미확인 |
