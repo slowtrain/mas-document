@@ -23,10 +23,10 @@ IBM Maximo Application Suite(MAS) 설치 및 구성 절차를 문서화합니다
 | `docs/installation/` | 설치 절차 문서 |
 | `docs/configuration/` | 구성 및 설정 문서 |
 | `docs/operations/` | 운영·유지보수 문서 |
+| `docs/development/` | 커스터마이징·개발 환경 문서 |
 | `docs/notes/` | 작업 메모·미완성 초안 |
 
 ## 금지 사항
 
-- 실제 비밀번호·API 키·Entitlement Key를 문서에 직접 기재하지 않습니다.
 - 검증되지 않은 명령어를 단정적으로 기술하지 않습니다.
 - 문서 파일에 바이너리·이미지를 직접 커밋하지 않습니다.

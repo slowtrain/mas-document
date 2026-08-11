@@ -13,6 +13,8 @@ docs/
     INSTALL_ONLINE.md   온라인 설치 절차
     INSTALL_SUMMARY.md  설치 기준 및 준비 항목 요약
     INSTALLATION.md     환경별 입력값 기록 양식
+  development/
+    DEVELOPMENT_SETUP.md  Java 커스터마이징 개발 환경 흐름
 ```
 
 ## 에이전트 작업 규칙
