@@ -410,6 +410,13 @@ head -c 60 ~/mas-install/redhat/pull-secret.json    # {"auths":{... 로 시작
 | `nmstate` | Agent-based Installer의 `networkConfig` 검증 (§3.7) |
 | `jq` | Pull Secret 병합 (§3.7, §3.8.2) |
 | `tar`, `gzip` | `oc`·`mirror-registry` 압축 해제 (§3.5, §3.7) |
+| `nginx` | 파일 배포용 웹 서버 (설치 파일·인증서 전달) |
+| `python3`, `python3-pip` | 스크립트 실행, 간이 HTTP 서버(`python3 -m http.server`) |
+| **`tmux`** | 긴 작업을 세션 끊김 없이 실행. `mas install`이 2~3시간이라 **없으면 SSH를 계속 유지해야 합니다** |
+| `git` | 문서·스크립트 형상 관리 |
+| `vim-enhanced` | 편집 (`vi`는 기본 포함) |
+| `net-tools`, `telnet`, `nmap-ncat` | 포트 확인·네트워크 진단 |
+| `unzip` | 압축 해제 |
 | `openssl`, `rsync`, `createrepo_c` | 예비 |
 
 ⚠️ 이 표는 **§3.1의 설치 목록과 동일**해야 합니다.
@@ -423,7 +430,8 @@ mkdir -p /home/maximo/mas-install/rpms
 dnf download --resolve --alldeps --disablerepo=mas-offline \
   --destdir /home/maximo/mas-install/rpms \
   podman openssl jq rsync tar gzip dnsmasq bind-utils firewalld createrepo_c \
-  nfs-utils nmstate chrony \
+  nfs-utils nmstate chrony nginx python3 python3-pip \
+  tmux git vim-enhanced net-tools telnet nmap-ncat unzip \
   sssd-nfs-idmap container-selinux passt-selinux nmstate-libs
 
 createrepo_c /home/maximo/mas-install/rpms
@@ -856,7 +864,7 @@ ls -lh ~/mas-install/nfs-provisioner/
 ~/mas-install/
   licenses/         entitlement_key.key, <license>.dat
   redhat/           pull-secret.json
-  rpms/             RPM 229개 (135MB) + repodata/
+  rpms/             RPM 323개 (168MB) + repodata/
   ocp/              openshift-client-linux.tar.gz, openshift-install-linux.tar.gz, sha256sum.txt
   mas-cli/          mas-cli-23.4.1.tar
   registry/         mirror-registry-amd64.tar.gz
@@ -1069,7 +1077,8 @@ EOF
 dnf --disablerepo='*' --enablerepo=mas-offline clean metadata
 dnf --disablerepo='*' --enablerepo=mas-offline install -y \
   podman openssl jq rsync tar gzip dnsmasq bind-utils firewalld createrepo_c \
-  nfs-utils nmstate chrony
+  nfs-utils nmstate chrony nginx python3 python3-pip \
+  tmux git vim-enhanced net-tools telnet nmap-ncat unzip
 ```
 
 ⚠️ `clean metadata`를 빠뜨리면 dnf가 이전 캐시를 써서 새 패키지를 `No match for argument`로 보고합니다.
@@ -1079,7 +1088,7 @@ dnf --disablerepo='*' --enablerepo=mas-offline install -y \
 ```bash
 rpm -qa 'gpg-pubkey*'          # 항목이 나와야 정상
 podman --version
-rpm -q podman dnsmasq bind-utils firewalld nfs-utils nmstate chrony
+rpm -q podman dnsmasq bind-utils firewalld nfs-utils nmstate chrony nginx python3 tmux
 nmstatectl --version
 ```
 

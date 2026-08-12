@@ -44,7 +44,7 @@
 | 1 | IBM Entitlement Key | ✅ |
 | 2 | MAS 라이선스 | ✅ ⚠️ Maximo IT AppPoints 포함 여부 미확인 |
 | 3 | Red Hat Pull Secret | ✅ |
-| 4 | RPM 오프라인 저장소 | ✅ 229개 / 135MB, 서명 정상, `repoclosure` 미해결 0건 |
+| 4 | RPM 오프라인 저장소 | ✅ 323개 / 168MB, 서명 정상, `repoclosure` 미해결 0건 |
 | 5 | OpenShift Client / Installer | ✅ checksum 통과 |
 | 6 | MAS CLI 이미지 | ✅ `linux/amd64` |
 | 7 | Mirror Registry 패키지 | ✅ |
