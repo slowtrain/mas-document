@@ -16,7 +16,7 @@ USER root
 #
 # Build Context:
 #
-#   <project_root>/
+#   <customize_root>/
 #   ├─ applications/
 #   └─ manage-developer/
 #      └─ Dockerfile

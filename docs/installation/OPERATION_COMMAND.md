@@ -172,8 +172,25 @@ Pod 이름 대신 컨트롤러·라벨로도 됩니다(`-f` 는 단일 Pod만 �
 
 ```bash
 oc logs -n mas-inst1-core deploy/ibm-mas-operator --tail=30
-oc logs -n mas-inst1-manage -l mas.ibm.com/serverBundle=all --tail=50 --prefix
+oc logs -n mas-inst1-manage -l mas.ibm.com/appType=serverBundle --tail=50 --prefix
 ```
+
+라벨이 기억나지 않으면 Deployment의 셀렉터를 그대로 씁니다.
+
+```bash
+oc get deploy <이름> -n <ns> -o jsonpath='{.spec.selector.matchLabels}{"\n"}'
+oc get pod <pod-name> -n <ns> --show-labels
+```
+
+Manage 서버 번들의 실제 라벨입니다.
+
+| 라벨 | 값 |
+|---|---|
+| `mas.ibm.com/appType` | `serverBundle` |
+| `mas.ibm.com/appTypeName` | `all` |
+| `mas.ibm.com/applicationId` | `manage` |
+| `mas.ibm.com/instanceId` | `inst1` |
+| `mas.ibm.com/workspaceId` | `ws1` |
 
 ### 2.2 Manage 서버 로그
 
