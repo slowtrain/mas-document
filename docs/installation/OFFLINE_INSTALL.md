@@ -2,7 +2,7 @@
 
 IBM MAS CLI 공식 문서(`ibm-mas.github.io/cli`)와 Red Hat OpenShift 공식 문서를 근거로 작성한 Maximo IT 오프라인 설치 가이드입니다.
 
-막혔을 때는 [TROUBLE_SHOOTING.md](TROUBLE_SHOOTING.md), 운영 명령은 [OCP_COMMAND.md](OCP_COMMAND.md), 서버 정보는 [SERVER_INFO.md](SERVER_INFO.md), 접속 주소·계정은 [ACCESS.md](ACCESS.md)를 보세요.
+막혔을 때는 [TROUBLE_SHOOTING.md](TROUBLE_SHOOTING.md), 운영 명령은 [OPERATION_COMMAND.md](OPERATION_COMMAND.md), 서버 정보는 [SERVER_INFO.md](SERVER_INFO.md), 접속 주소·계정은 [ACCESS.md](ACCESS.md)를 보세요.
 
 <details>
 <summary><b>목차</b></summary>
@@ -102,6 +102,13 @@ IBM MAS CLI 공식 문서(`ibm-mas.github.io/cli`)와 Red Hat OpenShift 공식 �
     - [3.12.1 실행 — 접속 정보 확인](#3121-실행--접속-정보-확인)
     - [3.12.2 실행 — 접속](#3122-실행--접속)
     - [3.12.3 확인 및 검증](#3123-확인-및-검증)
+- [4. 커스터마이징 배포 서버 구성](#4-커스터마이징-배포-서버-구성)
+  - [4.1 nginx 구성 (root 계정)](#41-nginx-구성-root-계정)
+    - [4.1.1 실행 — 현재 상태 확인](#411-실행--현재-상태-확인)
+    - [4.1.2 실행 — 배포 디렉터리](#412-실행--배포-디렉터리)
+    - [4.1.3 실행 — 서버 블록](#413-실행--서버-블록)
+    - [4.1.4 실행 — 기동 및 방화벽](#414-실행--기동-및-방화벽)
+    - [4.1.5 확인 및 검증](#415-확인-및-검증)
 
 </details>
 
@@ -410,7 +417,7 @@ head -c 60 ~/mas-install/redhat/pull-secret.json    # {"auths":{... 로 시작
 | `nmstate` | Agent-based Installer의 `networkConfig` 검증 (§3.7) |
 | `jq` | Pull Secret 병합 (§3.7, §3.8.2) |
 | `tar`, `gzip` | `oc`·`mirror-registry` 압축 해제 (§3.5, §3.7) |
-| `nginx` | 파일 배포용 웹 서버 (설치 파일·인증서 전달) |
+| `nginx` | 커스터마이징 아카이브 배포용 웹 서버 (§4) |
 | `python3`, `python3-pip` | 스크립트 실행, 간이 HTTP 서버(`python3 -m http.server`) |
 | **`tmux`** | 긴 작업을 세션 끊김 없이 실행. `mas install`이 2~3시간이라 **없으면 SSH를 계속 유지해야 합니다** |
 | `git` | 문서·스크립트 형상 관리 |
@@ -3538,7 +3545,7 @@ oc get manageworkspace inst1-ws1 -n mas-inst1-manage \
   -o jsonpath='{range .status.conditions[*]}{.type}: {.status} — {.message}{"\n"}{end}'
 ```
 
-더 자세한 Pod 역할·명령은 [OCP_COMMAND.md §16~17](OCP_COMMAND.md#16-이미지-빌드-manage)을 참고하세요.
+더 자세한 Pod 역할·명령은 [OPERATION_COMMAND.md §2.3](OPERATION_COMMAND.md#23-배포-과정-로그)·[§4.2](OPERATION_COMMAND.md#42-mas)를 참고하세요.
 
 웹 콘솔이 더 보기 편합니다 — `mas install`이 마지막에 URL을 출력합니다.
 
@@ -4165,3 +4172,189 @@ Test-NetConnection <sno-ip> -Port 31899
 ```
 
 여기서 막히면 방화벽 또는 NodePort 미개방입니다. 클러스터 안 조회는 되는데 외부만 안 되면 네트워크 문제로 좁혀집니다.
+
+---
+
+## 4. 커스터마이징 배포 서버 구성
+
+Java 커스터마이징을 MAS에 반영하려면 Customization Archive(ZIP)를 **클러스터가 접근할 수 있는 HTTP URL**로 제공해야 합니다. MAS는 파일 업로드를 받지 않고 등록된 URL을 직접 내려받습니다. 폐쇄망이라 외부 스토리지를 쓸 수 없으므로 Bastion을 배포 지점으로 씁니다.
+
+```text
+개발 PC ──scp──▶ Bastion 192.168.2.210:8080 ◀──HTTP GET── Manage 파드 (SNO 192.168.2.211)
+```
+
+§3.1에서 설치한 `nginx` 에 배포 전용 서버 블록을 추가합니다. **root 계정**으로 진행합니다.
+
+⚠️ 커스터마이징을 하지 않는 환경이면 이 절은 건너뜁니다. 아카이브를 만들고 게시·등록하는 절차는 [DEVELOPMENT_SETUP.md](../development/DEVELOPMENT_SETUP.md)에 있습니다.
+
+### 4.1 nginx 구성 (root 계정)
+
+#### 4.1.1 실행 — 현재 상태 확인
+
+```bash
+rpm -q nginx
+systemctl is-enabled nginx; systemctl is-active nginx
+ss -tlnp | grep -E ':80 |:8080 '
+```
+
+사이트 Bastion에서의 실제 출력입니다.
+
+```
+nginx-1.20.1-22.el9.x86_64
+enabled
+active
+LISTEN 0  511   0.0.0.0:80   0.0.0.0:*
+LISTEN 0  511      [::]:80      [::]:*
+```
+
+**nginx는 이미 기동돼 있습니다.** §3.1에서 설치만 했는데도 `active` 인 것은 rpm 설치 후 별도로 올린 것으로 보입니다. 즉 기동이 아니라 **설정 추가**가 이 절의 작업입니다.
+
+확인할 것은 §4.1.3에서 쓸 **8080이 비어 있는지**입니다. 위 출력에 80만 있고 8080이 없으므로 그대로 진행합니다. 8080이 이미 잡혀 있으면 §4.1.3·§4.1.4의 포트를 바꾸세요.
+
+#### 4.1.2 실행 — 배포 디렉터리
+
+배포 위치는 `/mas/mas-deployment` 입니다. 개발 PC의 `C:\Source\mas\mas-deployment` 와 같은 이름이라 어느 쪽 경로인지 헷갈리지 않습니다.
+
+```bash
+mkdir -p /mas/mas-deployment
+chown -R maximo:maximo /mas
+```
+
+소유자를 `maximo` 로 두는 것은 개발 PC에서 `scp` 로 바로 올리기 위해서입니다. root 소유면 업로드마다 경유 단계가 하나 늘어납니다.
+
+🔴 SELinux 라벨을 붙이지 않으면 **403이 납니다.** 최상위에 새로 만든 디렉터리는 컨텍스트가 `default_t` 라 nginx(`httpd_t`)가 읽지도, 통과하지도 못합니다.
+
+```bash
+semanage fcontext -a -t httpd_sys_content_t '/mas(/.*)?'
+restorecon -Rv /mas
+ls -Zd /mas /mas/mas-deployment
+```
+
+```
+Relabeled /mas from unconfined_u:object_r:default_t:s0 to unconfined_u:object_r:httpd_sys_content_t:s0
+Relabeled /mas/mas-deployment from unconfined_u:object_r:default_t:s0 to unconfined_u:object_r:httpd_sys_content_t:s0
+unconfined_u:object_r:httpd_sys_content_t:s0 /mas
+unconfined_u:object_r:httpd_sys_content_t:s0 /mas/mas-deployment
+```
+
+규칙을 `/mas/mas-deployment` 가 아니라 **`/mas` 부터** 거는 이유가 위 출력에 그대로 나옵니다. `/mas` 도 `default_t` 였습니다. 하위 디렉터리만 라벨을 고쳤다면 nginx가 상위 `/mas` 를 통과(search)하지 못해 결국 403이 납니다.
+
+`semanage` 로 규칙을 등록해두면 이후 파일을 새로 올려도 컨텍스트가 유지됩니다. `chcon` 으로 임시 변경하면 파일시스템 relabel 시 되돌아갑니다.
+
+> `/home/maximo` 아래에 두면 위 두 명령 외에 `chmod 711 /home/maximo` 와 `setsebool -P httpd_enable_homedirs on` 이 추가로 필요합니다. 홈 디렉터리를 다른 계정이 통과할 수 있게 여는 변경이라 피했습니다.
+
+#### 4.1.3 실행 — 서버 블록
+
+```bash
+cd /etc/nginx/conf.d
+vi mas_deployment.conf
+```
+
+```nginx
+server {
+    listen       8080;
+    server_name  _;
+
+    location / {
+        root      /mas/mas-deployment;
+        autoindex on;
+    }
+}
+```
+
+`/etc/nginx/conf.d/*.conf` 는 `nginx.conf` 의 `include` 로 자동으로 읽힙니다. 파일을 새로 만드는 것이므로 기본 설정은 건드리지 않습니다.
+
+배포 URL은 다음 형태가 됩니다.
+
+```
+http://192.168.2.210:8080/<파일명>
+```
+
+80이 아니라 8080을 쓰는 것은 nginx 기본 사이트와 분리하기 위해서입니다. 8080은 SELinux의 `http_port_t` 에 기본 포함돼 있어 추가 작업이 없습니다. 다른 포트를 쓰려면 `semanage port -a -t http_port_t -p tcp <포트>` 가 필요합니다.
+
+`autoindex on` 은 무엇이 배포돼 있는지 브라우저로 확인하기 위한 것입니다. 목록을 노출하고 싶지 않으면 빼도 동작에는 영향이 없습니다.
+
+#### 4.1.4 실행 — 기동 및 방화벽
+
+```bash
+nginx -t
+systemctl enable --now nginx
+systemctl start nginx
+systemctl stop nginx
+systemctl reload nginx
+
+
+firewall-cmd --permanent --add-port=8080/tcp   # 8080 커스터마이징 배포
+firewall-cmd --reload
+firewall-cmd --list-ports
+```
+
+`nginx -t` 가 `syntax is ok` / `test is successful` 이어야 합니다. 여기서 실패하면 반영하지 말고 설정을 먼저 고치세요.
+
+🔴 `reload` 를 빠뜨리지 마세요. nginx가 이미 실행 중이면 `enable --now` 는 아무 동작도 하지 않아 §4.1.3에서 만든 서버 블록이 로드되지 않습니다. 그 상태로 §4.1.5를 하면 8080이 `Connection refused` 로 나옵니다.
+
+#### 4.1.5 확인 및 검증
+
+검증 : 8080에서 대기 중이어야 함
+
+```bash
+ss -tlnp | grep 8080
+```
+
+검증 : 테스트 파일이 HTTP로 내려와야 함
+
+```bash
+echo ok > /mas/mas-deployment/health.txt
+curl -s http://192.168.2.210:8080/health.txt
+```
+
+`ok` 가 나오면 정상입니다.
+
+| 증상 | 원인 |
+|---|---|
+| `403 Forbidden` | §4.1.2의 `semanage` / `restorecon` 누락 |
+| `404 Not Found` | 경로 오타, `root` 설정 |
+| 응답 없음 (타임아웃) | 방화벽 8080 미개방 |
+| `Connection refused` | `systemctl reload nginx` 누락 |
+
+403이면 컨텍스트부터 봅니다. `/mas` 와 `/mas/mas-deployment` **둘 다** `httpd_sys_content_t` 여야 합니다. 한쪽이 `default_t` 로 남아 있으면 통과하지 못합니다.
+
+```bash
+ls -Zd /mas /mas/mas-deployment
+```
+
+SELinux가 원인인지 확실히 하려면 거부 로그를 봅니다.
+
+```bash
+ausearch -m avc -ts recent | grep -i nginx
+```
+
+검증 : 클러스터 안에서 같은 URL이 열려야 함 (MAS 설치 후)
+
+```bash
+export KUBECONFIG=/home/maximo/ocp-sno/auth/kubeconfig
+
+POD=$(oc get pod -n mas-inst1-manage --field-selector=status.phase=Running -o name | head -1)
+oc rsh -n mas-inst1-manage $POD curl -s http://192.168.2.210:8080/health.txt
+```
+
+`You must be logged in to the server` 가 나오면 `oc` 세션이 만료된 것이므로 위 `KUBECONFIG` 를 먼저 설정합니다. 설치 때 만든 인증서 기반 파일이라 만료되지 않습니다.
+
+`--field-selector` 로 `Running` 만 고르는 이유는, 그냥 `head -1` 하면 `Completed` 상태로 남아 있는 maxinst 파드를 집어 `oc rsh` 가 실패하기 때문입니다.
+
+`oc` 인증이 풀려 있어 위 확인을 못 할 때는 SNO 노드에서 직접 확인합니다. 파드 egress가 노드를 거쳐 나가므로 경로 검증으로는 같은 값을 합니다.
+
+```bash
+ssh -i ~/.ssh/quay_installer core@192.168.2.211 \
+  'curl -s http://192.168.2.210:8080/health.txt'
+```
+
+🔴 실제로 내려받는 주체는 Bastion이 아니라 **Manage 파드**입니다. Bastion에서 200이 나와도 파드에서 막히면 소용이 없으므로 이 확인이 본질입니다.
+
+IP를 직접 쓰므로 DNS 등록은 필요 없습니다. 호스트명으로 쓰려면 §3.2의 `mas.conf` 에 `address=/<이름>/192.168.2.210` 을 추가하고 `systemctl restart dnsmasq` 를 해야 하며, 그만큼 확인할 지점이 하나 늘어납니다.
+
+확인이 끝나면 테스트 파일을 지웁니다.
+
+```bash
+rm -f /mas/mas-deployment/health.txt
+```
