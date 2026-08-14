@@ -29,9 +29,6 @@ BIRT 설치(JDK 25 지정) → scriptlibrary 클래스 적용 → JDBC Driver �
    → 기존 보고서 Preview 검증 → 신규/수정 보고서 개발 → Manage Report Administration으로 등록
 ```
 
-🔴 **§7이 이 문서의 핵심입니다.** IBM 문서의 절차(클래스 복사 + Classpath 등록)만으로는 BIRT 4.21에서 동작하지 않습니다. 이유는 §7에 적었습니다.
-
----
 
 ## 1. BIRT Report Designer 4.21 설치
 
@@ -60,100 +57,39 @@ C:\Jdk\openjdk-25+36_windows-x64_bin\jdk-25\bin\javaw.exe
 -XX:CompileCommand=quiet
 ```
 
-JDK 25는 Java 커스터마이징에도 필요하므로 이미 설치돼 있습니다([DEVELOPMENT_SETUP.md](DEVELOPMENT_SETUP.md) 서두).
-
-## 2. Maximo BIRT 개발 리소스 확인
-
-Admin 이미지에서 추출한 SMP 트리에 이미 들어 있습니다(추출 절차는 [DEVELOPMENT_SETUP.md §1.4](DEVELOPMENT_SETUP.md)). **Docker에서 다시 꺼낼 필요가 없습니다.**
-
-```text
-C:\Source\mas\mas-files\smp-maximo\SMP\writeable\maximo\reports\birt
-├─ libraries        MaximoSystemLibrary.rptlibrary + 앱별 .properties
-├─ reports          제품 보고서 .rptdesign (93개 폴더, 236개)
-├─ scriptlibrary    classes/ — Maximo 전용 Script Library 클래스
-├─ templates        maximo*.rpttemplate
-└─ tools
-```
-
-JDBC Driver는 보고서 리소스가 아니라 Maximo `lib` 에 있습니다.
-
-```text
-C:\Source\mas\mas-files\smp-maximo\SMP\writeable\maximo\applications\maximo\lib
-├─ db2jcc.jar
-└─ db2jcc_license_cu.jar
-```
-
-## 3. 경로 변수 준비
-
-경로가 길고, **BIRT Viewer 플러그인 폴더명은 버전 문자열이 붙어 설치마다 다릅니다.** 변수로 한 번만 잡아두면 나머지가 단순해집니다.
-
-```powershell
-$JDK    = 'C:\Jdk\openjdk-25+36_windows-x64_bin\jdk-25\bin'
-$SMP    = 'C:\Source\mas\mas-files\smp-maximo\SMP\writeable\maximo'
-$ECL    = 'C:\IDE\birt-report-designer-all-in-one-4.21.0-202509121029-win32.win32.x86_64\eclipse'
-$VIEWER = (Get-ChildItem "$ECL\plugins" -Directory -Filter 'org.eclipse.birt.report.viewer_*').FullName
-
-$VIEWER
-```
-
-`org.eclipse.birt.report.viewer_4.21.…` 하나가 출력돼야 합니다. 여러 개가 나오면 BIRT가 중복 설치된 것이니 정리하세요.
-
-## 4. scriptlibrary 클래스 복사
+## 2. scriptlibrary 클래스 복사
 
 `classes` **안의 내용**이 `WEB-INF\classes` 아래로 들어가야 합니다.
 
-```powershell
-robocopy "$SMP\reports\birt\scriptlibrary\classes" "$VIEWER\birt\WEB-INF\classes" /E /NFL /NDL /NJH /NJS
+```
+<SMP_ROOT>\writeable\maximo\reports\birt\scriptlibrary\classes 
+```
+->
 
-Get-ChildItem "$VIEWER\birt\WEB-INF\classes"
-Test-Path "$VIEWER\birt\WEB-INF\classes\com\ibm\tivoli\maximo\report\script\MXReportScriptContext.class"
+```
+<BIRT_REPORT_DESIGNER_ROOT>\plugins\org.eclipse.birt.report.viewer_4.21.0.v202508260649\birt\WEB-INF\classes
 ```
 
-🔴 **`Copy-Item` 으로 하지 마세요.** `Copy-Item "...\classes\*" "...\classes\" -Recurse` 는 `com` 디렉터리를 건너뛰고 그 **안의 내용**(`ibm\...`)을 복사합니다. 실제로 그렇게 됩니다.
+## 3. JDBC Driver 복사
+데이터베이스 접속을 위한 드라이버를 복사합니다.
 
-| | 결과 |
-|---|---|
-| 올바름 | `WEB-INF\classes\com\ibm\tivoli\...` |
-| `Copy-Item` 와일드카드 | `WEB-INF\classes\ibm\tivoli\...` ← 패키지 한 단계 누락 |
-| `classes` 폴더째 복사 | `WEB-INF\classes\classes\com\...` |
+```
+<SMP_ROOT>\writeable\maximo\applications\maximo\lib\db2jcc.jar
+<SMP_ROOT>\writeable\maximo\applications\maximo\lib\db2jcc_license_cu.jar
+```
+->
 
-`Test-Path` 가 `True` 여야 하고, 목록에 `com` 이 보여야 합니다. `ibm` 이 보이면 잘못된 것입니다.
-
-> `robocopy` 는 복사에 성공해도 종료 코드 1을 반환합니다. 오류가 아닙니다.
-
-## 5. JDBC Driver 복사
-
-```powershell
-Copy-Item "$SMP\applications\maximo\lib\db2jcc.jar",`
-          "$SMP\applications\maximo\lib\db2jcc_license_cu.jar" `
-          "$VIEWER\birt\WEB-INF\lib\" -Force
-
-Get-ChildItem "$VIEWER\birt\WEB-INF\lib" -Filter 'db2*'
+```
+<BIRT_REPORT_DESIGNER_ROOT>\plugins\org.eclipse.birt.report.viewer_4.21.0.v202508260649\birt\WEB-INF\lib\db2jcc.jar
+<BIRT_REPORT_DESIGNER_ROOT>\plugins\org.eclipse.birt.report.viewer_4.21.0.v202508260649\birt\WEB-INF\lib\db2jcc_license_cu.jar
 ```
 
-## 6. mxreportdatasources.properties 설정
+## 4. mxreportdatasources.properties 설정
+편집기로 열어서 아래 내용 입력
+<BIRT_REPORT_DESIGNER_ROOT>\plugins\org.eclipse.birt.report.viewer_4.21.0.v202508260649\birt\WEB-INF\classes\mxreportdatasources.properties
 
-Preview 때 접속할 DB 정보입니다. §4에서 `classes` 를 복사할 때 이 파일도 함께 들어갔습니다.
 
-```text
-$VIEWER\birt\WEB-INF\classes\mxreportdatasources.properties
 ```
-
-형식은 원본 파일 주석에 정의돼 있습니다.
-
-```text
-<DataSourceName>.url=value
-<DataSourceName>.driver=value
-<DataSourceName>.username=value
-<DataSourceName>.password=value
-<DataSourceName>.schemaowner=value
-```
-
-`<DataSourceName>` 은 보고서가 참조하는 데이터소스 이름이며, 제품 보고서는 **`maximoDataSource`** 를 씁니다(`MaximoSystemLibrary.maximoDataSource` 를 상속).
-
-현재 환경 기준 설정값입니다.
-
-```properties
 maximoDataSource.url=jdbc:db2://192.168.2.211:31899/BLUDB
 maximoDataSource.driver=com.ibm.db2.jcc.DB2Driver
 maximoDataSource.username=db2inst1
@@ -161,27 +97,79 @@ maximoDataSource.password=<비밀번호>
 maximoDataSource.schemaowner=MAXIMO
 ```
 
-| 항목 | 값 | 근거 |
-|---|---|---|
-| DB Host | `192.168.2.211` | SNO NodePort |
-| DB Port | `31899` | 평문 NodePort. **설치마다 달라집니다** |
-| DB Name | `BLUDB` | |
-| Driver | `com.ibm.db2.jcc.DB2Driver` | |
-| Schema Owner | `MAXIMO` | 세션 기본 스키마로 설정되어 SQL에 접두어가 필요 없습니다 |
+## 5. Project 생성 
 
-계정·비밀번호는 [ACCESS.md](../installation/ACCESS.md)를, 포트 확인은 [OFFLINE_INSTALL.md §3.12](../installation/OFFLINE_INSTALL.md#312-데이터베이스db2-접속-사용자-계정)를 보세요.
+```
+Create a project → Report Project → Input "Project name"   → Finish    
+```
 
-🔴 **이 파일을 채우기 전에 §7로 넘어가면 안 됩니다.** §7에서 이 파일을 프래그먼트에 그대로 담습니다. 주석만 있는 원본 템플릿이 들어가면 모든 값이 `null` 이 되어 `Class.forName(null)` 에서 NullPointerException이 납니다.
+## 7. Design Import 
 
-🔴 **DB 비밀번호가 들어갑니다.** BIRT 설치 폴더에만 두고 저장소에 커밋하지 마세요.
+```
+Report Project 선택  → import → General → File System → select folder  → Check Design file   → Finish
 
-> 이 파일은 **설계 시점에만** 쓰입니다. Manage에서 보고서를 실행할 때는 사용되지 않습니다.
+```
 
-## 7. OSGi 프래그먼트 생성 및 배치
+## 6. Project Classpath 설정
+
+```
+Report Project 선택 → Project → Properties → Report Design → Classpath
+→ Add External Class Folder → $VIEWER\birt\WEB-INF\classes
+```
+
+## 6. Report Library  경로 설정
+
+```
+Window → Preferences → Report Design → Resource → File System
+```
+
+```text
+C:\Source\mas\mas-files\smp-maximo\SMP\writeable\maximo\reports\birt\libraries
+```
+
+## 7. Template 경로 설정
+
+```
+Window → Preferences → Report Design → Template
+```
+
+```text
+C:\Source\mas\mas-files\smp-maximo\SMP\writeable\maximo\reports\birt\templates
+```
+
+## 8. Report 수정후 preview 테스트
+
+수정하고자하는 *.rptdesign 파일선택후 수정 후 preview 클릭.
+
+## 9. Manage에 보고서 등록
+
+개발·테스트가 끝난 산출물을 Manage에 올립니다.
+
+| 대상 | |
+|---|---|
+| `.rptdesign` | 보고서 정의 |
+| `.rptlibrary` | 공용 라이브러리를 수정한 경우 |
+| Report Resource | 이미지·properties 등 참조 리소스 |
+
+```
+Maximo Manage → Report Administration → 보고서 등록 / Import
+```
+
+등록 후 할 일입니다.
+
+- 보고서 메타데이터 설정
+- Application 연결
+- Parameter 설정
+- 실제 화면에서 실행 테스트
+
+
+
+
+## 10. OSGi 프래그먼트 생성 및 배치 (정상 preview 안될시)
 
 ### 왜 필요한가
 
-§4처럼 클래스를 복사하고 §8처럼 Classpath를 등록해도 Preview에서 이 오류가 납니다.
+9.2에서 정상적으로 동작하는 리포트가 Preview에서 오류 발생하여 우회
 
 ```
 Invalid javascript expression: ReferenceError: "MXReportScriptContext" is not defined
@@ -216,7 +204,7 @@ Wrapped java.lang.ClassNotFoundException: com.ibm.tivoli.maximo.report.script.MX
 | `org.eclipse.birt.core` | BIRT 스크립트 실행 기반 |
 | `org.eclipse.birt.report.engine` | 리포트 생성 엔진 |
 
-### 7.1 프래그먼트 재료 준비
+### 10.1 프래그먼트 재료 준비
 
 세 가지를 한 폴더에 모읍니다. **셋 다 같은 클래스로더에 있어야** 합니다.
 
@@ -226,50 +214,58 @@ Wrapped java.lang.ClassNotFoundException: com.ibm.tivoli.maximo.report.script.MX
 | `com/ibm/db2/jcc/...` | 드라이버가 같은 로더에 없으면 `Class.forName` 이 실패 |
 | `mxreportdatasources.properties` (**루트**) | `getClass().getResourceAsStream("/mxreportdatasources.properties")` 로 읽음 |
 
-```powershell
-$STAGE = 'C:\Temp\birt-frag'
-Remove-Item $STAGE -Recurse -Force -ErrorAction SilentlyContinue
-New-Item -ItemType Directory $STAGE -Force | Out-Null
+작업 폴더는 `C:\Temp\birt-frag` 입니다. PowerShell에서 아래를 순서대로 실행합니다.
 
-robocopy "$SMP\reports\birt\scriptlibrary\classes\com" "$STAGE\com" /E /NFL /NDL /NJH /NJS
-Copy-Item "$VIEWER\birt\WEB-INF\classes\mxreportdatasources.properties" $STAGE
-
-& "$JDK\jar.exe" --extract --file "$SMP\applications\maximo\lib\db2jcc.jar" --dir $STAGE
-& "$JDK\jar.exe" --extract --file "$SMP\applications\maximo\lib\db2jcc_license_cu.jar" --dir $STAGE
-Remove-Item "$STAGE\META-INF\MANIFEST.MF" -Force -ErrorAction SilentlyContinue
-```
-
-⚠️ properties는 **SMP 원본이 아니라 §6에서 값을 채운 `$VIEWER\birt\WEB-INF\classes` 쪽**에서 복사합니다. SMP 원본은 전부 주석 처리된 템플릿입니다.
-
-DB2 드라이버는 JAR 참조가 아니라 **풀어서** 넣습니다. 프래그먼트에 `Bundle-ClassPath` 를 선언하면 `.` 이 호스트 기준으로 해석되어 프래그먼트 루트의 리소스를 못 찾습니다.
-
-### 7.2 프래그먼트 생성
-
-🔴 **BIRT를 완전히 종료한 상태에서** 실행합니다. 실행 중이면 JAR이 잠깁니다.
+**1) 작업 폴더 비우고 만들기**
 
 ```powershell
-$fragHosts = @{
-  'com.ibm.tivoli.maximo.scriptlibrary'        = 'org.mozilla.rhino'
-  'com.ibm.tivoli.maximo.scriptlibrary.core'   = 'org.eclipse.birt.core'
-  'com.ibm.tivoli.maximo.scriptlibrary.engine' = 'org.eclipse.birt.report.engine'
-}
-New-Item -ItemType Directory "$ECL\dropins" -Force | Out-Null
-
-foreach ($k in $fragHosts.Keys) {
-  $mf = "$env:TEMP\frag.mf"
-  @('Manifest-Version: 1.0',
-    'Bundle-ManifestVersion: 2',
-    "Bundle-SymbolicName: $k",
-    'Bundle-Version: 1.3.0',
-    "Fragment-Host: $($fragHosts[$k])") | Set-Content -Encoding ascii $mf
-
-  & "$JDK\jar.exe" --create --file "$ECL\dropins\${k}_1.3.0.jar" --manifest $mf -C $STAGE .
-}
-
-Get-ChildItem "$ECL\dropins"
+Remove-Item "C:\Temp\birt-frag" -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory "C:\Temp\birt-frag" -Force
 ```
 
-만들어지는 매니페스트입니다. `Fragment-Host` 한 줄이 이 JAR을 프래그먼트로 만듭니다.
+**2) Script Library 클래스 복사**
+
+```powershell
+robocopy "C:\Source\mas\mas-files\smp-maximo\SMP\writeable\maximo\reports\birt\scriptlibrary\classes\com" "C:\Temp\birt-frag\com" /E /NFL /NDL /NJH /NJS
+```
+
+**3) 접속정보 복사**
+
+```powershell
+Copy-Item "C:\IDE\birt-report-designer-all-in-one-4.21.0-202509121029-win32.win32.x86_64\eclipse\plugins\org.eclipse.birt.report.viewer_4.21.0.v202508260649\birt\WEB-INF\classes\mxreportdatasources.properties" "C:\Temp\birt-frag"
+```
+
+⚠️ SMP 원본이 아니라 **§4에서 값을 채운 BIRT 쪽 파일**을 복사합니다. SMP 원본은 전부 주석 처리된 템플릿이라, 그게 들어가면 접속정보가 모두 `null` 이 되어 NullPointerException이 납니다.
+
+**4) DB2 드라이버 풀어 넣기**
+
+```powershell
+& "C:\Jdk\openjdk-25+36_windows-x64_bin\jdk-25\bin\jar.exe" --extract --file "C:\Source\mas\mas-files\smp-maximo\SMP\writeable\maximo\applications\maximo\lib\db2jcc.jar" --dir "C:\Temp\birt-frag"
+
+& "C:\Jdk\openjdk-25+36_windows-x64_bin\jdk-25\bin\jar.exe" --extract --file "C:\Source\mas\mas-files\smp-maximo\SMP\writeable\maximo\applications\maximo\lib\db2jcc_license_cu.jar" --dir "C:\Temp\birt-frag"
+
+Remove-Item "C:\Temp\birt-frag\META-INF\MANIFEST.MF" -Force -ErrorAction SilentlyContinue
+```
+
+JAR을 그대로 넣지 않고 푸는 이유는, 프래그먼트에 `Bundle-ClassPath` 를 선언하면 `.` 이 호스트 기준으로 해석되어 프래그먼트 루트의 리소스를 못 찾기 때문입니다.
+
+**5) 확인** — 셋 다 `True` 여야 합니다.
+
+```powershell
+Test-Path "C:\Temp\birt-frag\com\ibm\tivoli\maximo\report\script\MXReportScriptContext.class"
+Test-Path "C:\Temp\birt-frag\com\ibm\db2\jcc\DB2Driver.class"
+Test-Path "C:\Temp\birt-frag\mxreportdatasources.properties"
+```
+
+### 10.2 프래그먼트 생성
+
+🔴 **BIRT를 완전히 종료한 상태에서** 진행합니다. 실행 중이면 JAR이 잠겨 만들거나 지울 수 없습니다.
+
+**1) 매니페스트 파일 3개 작성**
+
+`C:\Temp\birt-frag-mf` 폴더를 만들고, 편집기로 아래 3개 파일을 만듭니다. 내용은 `Bundle-SymbolicName` 과 `Fragment-Host` 두 줄만 다릅니다.
+
+`rhino.mf`
 
 ```text
 Manifest-Version: 1.0
@@ -279,15 +275,86 @@ Bundle-Version: 1.3.0
 Fragment-Host: org.mozilla.rhino
 ```
 
-명령에서 주의할 점입니다.
+`core.mf`
 
-| 부분 | 이유 |
-|---|---|
-| `-Encoding ascii` | 기본 인코딩은 BOM이 붙어 매니페스트가 무시됩니다 |
-| `-C $STAGE .` | JAR 루트부터 담기게 합니다. 한 단계 깊어지면 클래스도 properties도 못 찾습니다 |
-| `${k}` | 중괄호가 없으면 `$k_1` 을 변수명으로 읽습니다 |
+```text
+Manifest-Version: 1.0
+Bundle-ManifestVersion: 2
+Bundle-SymbolicName: com.ibm.tivoli.maximo.scriptlibrary.core
+Bundle-Version: 1.3.0
+Fragment-Host: org.eclipse.birt.core
+```
 
-### 7.3 배치 위치
+`engine.mf`
+
+```text
+Manifest-Version: 1.0
+Bundle-ManifestVersion: 2
+Bundle-SymbolicName: com.ibm.tivoli.maximo.scriptlibrary.engine
+Bundle-Version: 1.3.0
+Fragment-Host: org.eclipse.birt.report.engine
+```
+
+🔴 **마지막 `Fragment-Host` 줄을 입력한 뒤 `Enter` 를 한 번 누르세요.** 개행이 없으면 `jar` 명령이 그 줄을 **조용히 버립니다.** 오류도 안 나고 JAR 크기도 같아서 알아채기 어렵습니다.
+
+🔴 메모장이면 인코딩을 **`ANSI`** 로 저장하세요. BOM이 붙으면 매니페스트가 통째로 무시됩니다.
+
+개행이 들어갔는지 확인합니다. 끝이 `0D 0A` 로 나와야 합니다.
+
+```powershell
+Format-Hex "C:\Temp\birt-frag-mf\rhino.mf" | Select-Object -Last 1
+```
+
+**2) dropins 폴더 만들기**
+
+```powershell
+New-Item -ItemType Directory "C:\IDE\birt-report-designer-all-in-one-4.21.0-202509121029-win32.win32.x86_64\eclipse\dropins" -Force
+```
+
+**3) JAR 3개 생성**
+
+```powershell
+& "C:\Jdk\openjdk-25+36_windows-x64_bin\jdk-25\bin\jar.exe" --create --file "C:\IDE\birt-report-designer-all-in-one-4.21.0-202509121029-win32.win32.x86_64\eclipse\dropins\com.ibm.tivoli.maximo.scriptlibrary_1.3.0.jar" --manifest "C:\Temp\birt-frag-mf\rhino.mf" -C "C:\Temp\birt-frag" .
+
+& "C:\Jdk\openjdk-25+36_windows-x64_bin\jdk-25\bin\jar.exe" --create --file "C:\IDE\birt-report-designer-all-in-one-4.21.0-202509121029-win32.win32.x86_64\eclipse\dropins\com.ibm.tivoli.maximo.scriptlibrary.core_1.3.0.jar" --manifest "C:\Temp\birt-frag-mf\core.mf" -C "C:\Temp\birt-frag" .
+
+& "C:\Jdk\openjdk-25+36_windows-x64_bin\jdk-25\bin\jar.exe" --create --file "C:\IDE\birt-report-designer-all-in-one-4.21.0-202509121029-win32.win32.x86_64\eclipse\dropins\com.ibm.tivoli.maximo.scriptlibrary.engine_1.3.0.jar" --manifest "C:\Temp\birt-frag-mf\engine.mf" -C "C:\Temp\birt-frag" .
+```
+
+`-C "C:\Temp\birt-frag" .` 가 중요합니다. 이렇게 해야 JAR 루트에 `com\...` 과 `mxreportdatasources.properties` 가 들어갑니다. 한 단계 깊어지면 클래스도 접속정보도 못 찾습니다.
+
+**4) 확인 — `Fragment-Host` 가 JAR 안에 들어갔는지**
+
+JAR 3개가 각각 6MB 남짓이어야 합니다.
+
+```powershell
+Get-ChildItem "C:\IDE\birt-report-designer-all-in-one-4.21.0-202509121029-win32.win32.x86_64\eclipse\dropins"
+```
+
+🔴 **크기만 보고 넘어가면 안 됩니다.** 매니페스트를 꺼내 `Fragment-Host` 줄이 있는지 직접 확인하세요.
+
+```powershell
+Remove-Item "C:\Temp\mfcheck" -Recurse -Force -ErrorAction SilentlyContinue
+
+& "C:\Jdk\openjdk-25+36_windows-x64_bin\jdk-25\bin\jar.exe" --extract --file "C:\IDE\birt-report-designer-all-in-one-4.21.0-202509121029-win32.win32.x86_64\eclipse\dropins\com.ibm.tivoli.maximo.scriptlibrary_1.3.0.jar" --dir "C:\Temp\mfcheck" META-INF/MANIFEST.MF
+
+Get-Content "C:\Temp\mfcheck\META-INF\MANIFEST.MF"
+```
+
+이렇게 나와야 정상입니다.
+
+```text
+Manifest-Version: 1.0
+Bundle-ManifestVersion: 2
+Bundle-SymbolicName: com.ibm.tivoli.maximo.scriptlibrary
+Bundle-Version: 1.3.0
+Fragment-Host: org.mozilla.rhino
+Created-By: 25 (Oracle Corporation)
+```
+
+`Fragment-Host` 가 없으면 §10.2-1의 개행 문제입니다. `.mf` 파일 끝에 개행을 넣고 JAR을 다시 만드세요. 나머지 두 JAR도 같은 방법으로 확인합니다.
+
+### 10.3 배치 위치
 
 **`dropins` 이며 `plugins` 가 아닙니다.**
 
@@ -304,7 +371,7 @@ eclipse\
 
 🔴 **같은 `Bundle-SymbolicName` 의 옛 버전 JAR을 반드시 지우세요.** 두 버전이 남아 있으면 어느 쪽이 붙을지 모호해집니다.
 
-### 7.4 `-clean` 기동
+### 10.4 `-clean` 기동
 
 `dropins` 는 **기동 시에만** 스캔됩니다. 프래그먼트를 만들거나 바꿀 때마다 필요합니다.
 
@@ -322,7 +389,7 @@ Select-String 'scriptlibrary' "$ECL\configuration\org.eclipse.equinox.simpleconf
 com.ibm.tivoli.maximo.scriptlibrary,1.3.0,dropins/com.ibm.tivoli.maximo.scriptlibrary_1.3.0.jar,4,false
 ```
 
-### 7.5 접속정보를 바꿀 때
+### 10.5 접속정보를 바꿀 때
 
 🔴 `mxreportdatasources.properties` 가 **두 벌**이 됩니다. DB 정보를 바꾸면 둘 다 갱신해야 합니다.
 
@@ -330,116 +397,3 @@ com.ibm.tivoli.maximo.scriptlibrary,1.3.0,dropins/com.ibm.tivoli.maximo.scriptli
 |---|---|
 | `$VIEWER\birt\WEB-INF\classes\` | 직접 편집 |
 | `dropins\*_1.3.0.jar` 안의 루트 | §7.1~7.4를 다시 수행 (버전 올리고 이전 JAR 삭제) |
-
-## 8. Project Classpath 설정
-
-```
-Report Project 선택 → Project → Properties → Report Design → Classpath
-→ Add External Class Folder → $VIEWER\birt\WEB-INF\classes
-```
-
-> 이 설정만으로는 §7의 문제가 해결되지 않습니다. Viewer 실행 등 다른 경로를 위해 등록해둡니다.
-
-## 9. Report Library · Template 경로 설정
-
-**Library**
-
-```
-Window → Preferences → Report Design → Resource → File System
-```
-
-```text
-C:\Source\mas\mas-files\smp-maximo\SMP\writeable\maximo\reports\birt\libraries
-```
-
-🔴 `libraries` **까지** 지정해야 합니다. 상위 `reports\birt` 로 잡으면 `MaximoSystemLibrary.rptlibrary` 를 못 찾아 데이터소스·테마 상속이 깨집니다.
-
-**Template**
-
-```
-Window → Preferences → Report Design → Template
-```
-
-```text
-C:\Source\mas\mas-files\smp-maximo\SMP\writeable\maximo\reports\birt\templates
-```
-
-설정 후 BIRT를 재시작합니다.
-
-## 10. 기존 보고서 Preview 테스트
-
-신규 개발 전에 **제품 보고서로 환경을 검증**합니다. 여기서 통과하지 못하면 신규 보고서도 안 됩니다.
-
-**1) 기존 Maximo 보고서 파일을 BIRT Report Designer에서 Open**
-
-파라미터가 적은 `ASSET\asset_detail.rptdesign` 을 권합니다.
-
-```text
-C:\Source\mas\mas-files\smp-maximo\SMP\writeable\maximo\reports\birt\reports\ASSET\asset_detail.rptdesign
-```
-
-**2) Preview 실행**
-
-파라미터 입력창이 뜹니다. `where` 는 Maximo가 화면의 조회조건을 넘겨주는 자리라, 단독 Preview에서는 전체 조회로 둡니다.
-
-| 파라미터 | 입력 |
-|---|---|
-| `where` | `1=1` |
-| `appname` | 비움 |
-| `paramdelimiter` | 비움 |
-| `paramstring` | 비움 |
-
-**3) 로그로 판정**
-
-제품 보고서의 `initialize` 스크립트가 로그 파일 경로를 지정합니다. `asset_detail` 은 `C:\temp\asset_detail.log` 입니다.
-
-```powershell
-Get-Content C:\temp\asset_detail.log -Tail 40
-```
-
-| 로그 | 의미 | 대응 |
-|---|---|---|
-| `Designtime DataSource [maximoDataSource] [url] = jdbc:db2://...` | 접속정보 정상 | 이후 실패는 네트워크·계정 문제 |
-| `[url] = null` + `NullPointerException` | 프래그먼트 안 properties가 비어 있음 | §6 → §7 다시 |
-| `ERROR MXReportJobCancelManager birtAdminService is null` | Maximo 런타임 밖이라 나는 **정상 메시지** | 무시 |
-
-화면 오류 기준입니다.
-
-| 오류 | 원인 | 대응 |
-|---|---|---|
-| `"MXReportScriptContext" is not defined` | 스크립트 클래스가 안 보임 | §7 |
-| `cannot be found by org.mozilla.rhino_...` | 위와 동일 | §7 |
-| 오류 없이 빈 화면 | 데이터셋이 빈 결과 | 로그의 `[url]` 확인 |
-
-그 밖에 확인할 것들입니다.
-
-| 확인 | 방법 |
-|---|---|
-| DB 포트 도달 | `Test-NetConnection 192.168.2.211 -Port 31899` |
-| JDBC Driver 배치 | `Get-ChildItem "$VIEWER\birt\WEB-INF\lib" -Filter 'db2*'` |
-| 프래그먼트 등록 | §7.4의 `bundles.info` 조회 |
-| classes 계층 | `WEB-INF\classes\com\...` 인지 (`classes\classes` 아님) |
-| Library 경로 | §9 |
-
-## 11. Manage에 보고서 등록
-
-개발·테스트가 끝난 산출물을 Manage에 올립니다.
-
-| 대상 | |
-|---|---|
-| `.rptdesign` | 보고서 정의 |
-| `.rptlibrary` | 공용 라이브러리를 수정한 경우 |
-| Report Resource | 이미지·properties 등 참조 리소스 |
-
-```
-Maximo Manage → Report Administration → 보고서 등록 / Import
-```
-
-등록 후 할 일입니다.
-
-- 보고서 메타데이터 설정
-- Application 연결
-- Parameter 설정
-- 실제 화면에서 실행 테스트
-
-> Java 클래스와 달리 보고서는 Customization Archive와 이미지 재빌드를 거치지 않습니다. Report Administration에서 직접 Import하므로 [DEVELOPMENT_SETUP.md §5](DEVELOPMENT_SETUP.md#5-소스-게시-및-mas-배포)의 20~30분 사이클이 필요 없습니다.
